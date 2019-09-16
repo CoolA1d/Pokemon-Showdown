@@ -8,7 +8,7 @@
 function getMegaStone(stone) {
 	let item = Dex.getItem(stone);
 	if (!item.exists) {
-		if (toId(stone) === 'dragonascent') {
+		if (toID(stone) === 'dragonascent') {
 			let move = Dex.getMove(stone);
 			return {
 				id: move.id,
@@ -29,9 +29,9 @@ function getMegaStone(stone) {
 const commands = {
 	'!othermetas': true,
 	om: 'othermetas',
-	othermetas: function (target, room, user) {
+	othermetas(target, room, user) {
 		if (!this.runBroadcast()) return;
-		target = toId(target);
+		target = toID(target);
 		let buffer = ``;
 
 		if (target === 'all' && this.broadcasting) {
@@ -61,14 +61,14 @@ const commands = {
 	},
 	othermetashelp: [
 		`/om - Provides links to information on the Other Metagames.`,
-		`!om - Show everyone that information. Requires: + % @ * # & ~`,
+		`!om - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!mixandmega': true,
 	mnm: 'mixandmega',
-	mixandmega: function (target, room, user) {
+	mixandmega(target, room, user) {
 		if (!this.runBroadcast()) return;
-		if (!toId(target) || !target.includes('@')) return this.parse('/help mixandmega');
+		if (!toID(target) || !target.includes('@')) return this.parse('/help mixandmega');
 		let sep = target.split('@');
 		let stone = getMegaStone(sep[1]);
 		let template = Dex.getTemplate(sep[0]);
@@ -95,7 +95,7 @@ const commands = {
 		if (stone.isUnreleased) {
 			this.errorReply(`Warning: ${stone.name} is unreleased and is not usable in current Mix and Mega.`);
 		}
-		if (toId(sep[1]) === 'dragonascent' && !['smeargle', 'rayquaza', 'rayquazamega'].includes(toId(sep[0]))) {
+		if (toID(sep[1]) === 'dragonascent' && !['smeargle', 'rayquaza', 'rayquazamega'].includes(toID(sep[0]))) {
 			this.errorReply(`Warning: Only Pokemon with access to Dragon Ascent can mega evolve with Mega Rayquaza's traits.`);
 		}
 		// Fake Pokemon and Mega Stones
@@ -176,9 +176,9 @@ const commands = {
 	'!stone': true,
 	orb: 'stone',
 	megastone: 'stone',
-	stone: function (target) {
+	stone(target) {
 		if (!this.runBroadcast()) return;
-		let targetid = toId(target);
+		let targetid = toID(target);
 		if (!targetid) return this.parse('/help stone');
 		let stone = getMegaStone(targetid);
 		if (!stone.exists) return this.errorReply(`Error: Mega Stone not found.`);
@@ -245,12 +245,12 @@ const commands = {
 			buf += `<span class="col itemiconcol"><psicon item="${targetid}"/></span> `;
 		}
 		if (targetid === "dragonascent") {
-			buf += `<span class="col movenamecol" style="white-space:nowrap"><a href="https://pokemonshowdown.com/dex/moves/${targetid}" target="_blank">Dragon Ascent</a></span> `;
+			buf += `<span class="col movenamecol" style="white-space:nowrap"><a href="https://${Config.routes.dex}/moves/${targetid}" target="_blank">Dragon Ascent</a></span> `;
 		} else {
-			buf += `<span class="col pokemonnamecol" style="white-space:nowrap"><a href="https://pokemonshowdown.com/dex/items/${stone.id}" target="_blank">${stone.name}</a></span> `;
+			buf += `<span class="col pokemonnamecol" style="white-space:nowrap"><a href="https://${Config.routes.dex}/items/${stone.id}" target="_blank">${stone.name}</a></span> `;
 		}
 		if (deltas.type) {
-			buf += `<span class="col typecol"><img src="https://play.pokemonshowdown.com/sprites/types/${deltas.type}.png" alt="${deltas.type}" height="14" width="32"></span> `;
+			buf += `<span class="col typecol"><img src="https://${Config.routes.client}/sprites/types/${deltas.type}.png" alt="${deltas.type}" height="14" width="32"></span> `;
 		} else {
 			buf += `<span class="col typecol"></span>`;
 		}
@@ -275,9 +275,9 @@ const commands = {
 
 	'!350cup': true,
 	'350': '350cup',
-	'350cup': function (target, room, user) {
+	'350cup'(target, room, user) {
 		if (!this.runBroadcast()) return;
-		if (!toId(target)) return this.parse('/help 350cup');
+		if (!toID(target)) return this.parse('/help 350cup');
 		let template = Dex.deepClone(Dex.getTemplate(target));
 		if (!template.exists) return this.errorReply("Error: Pokemon not found.");
 		let bst = 0;
@@ -293,9 +293,9 @@ const commands = {
 
 	'!tiershift': true,
 	ts: 'tiershift',
-	tiershift: function (target, room, user) {
+	tiershift(target, room, user) {
 		if (!this.runBroadcast()) return;
-		if (!toId(target)) return this.parse('/help tiershift');
+		if (!toID(target)) return this.parse('/help tiershift');
 		let template = Dex.deepClone(Dex.getTemplate(target));
 		if (!template.exists) return this.errorReply("Error: Pokemon not found.");
 		/** @type {{[k: string]: number}} */
@@ -316,6 +316,7 @@ const commands = {
 		if (!(tier in boosts)) return this.sendReply(`|html|${Chat.getDataPokemonHTML(template)}`);
 		let boost = boosts[tier];
 		for (let statName in template.baseStats) {
+			if (statName === 'hp') continue;
 			template.baseStats[statName] = Dex.clampIntRange(template.baseStats[statName] + boost, 1, 255);
 		}
 		this.sendReply(`|raw|${Chat.getDataPokemonHTML(template)}`);
@@ -324,9 +325,9 @@ const commands = {
 
 	'!scalemons': true,
 	scale: 'scalemons',
-	scalemons: function (target, room, user) {
+	scalemons(target, room, user) {
 		if (!this.runBroadcast()) return;
-		if (!toId(target)) return this.parse(`/help scalemons`);
+		if (!toID(target)) return this.parse(`/help scalemons`);
 		let template = Dex.deepClone(Dex.getTemplate(target));
 		if (!template.exists) return this.errorReply(`Error: Pokemon ${target} not found.`);
 		let stats = ['atk', 'def', 'spa', 'spd', 'spe'];
@@ -338,6 +339,115 @@ const commands = {
 		this.sendReply(`|raw|${Chat.getDataPokemonHTML(template)}`);
 	},
 	scalemonshelp: [`/scale OR /scalemons <pokemon> - Shows the base stats that a Pokemon would have in Scalemons.`],
+
+	'!natureswap': true,
+	ns: 'natureswap',
+	natureswap(target, room, user) {
+		if (!this.runBroadcast()) return;
+		let nature = target.trim().split(' ')[0];
+		let pokemon = target.trim().split(' ')[1];
+		if (!toID(nature) || !toID(pokemon)) return this.parse(`/help natureswap`);
+		let natureObj = /** @type {{name: string, plus?: string | undefined, minus?: string | undefined, exists?: boolean}} */ Dex.getNature(nature);
+		if (!natureObj.exists) return this.errorReply(`Error: Nature ${nature} not found.`);
+		let template = Dex.deepClone(Dex.getTemplate(pokemon));
+		if (!template.exists) return this.errorReply(`Error: Pokemon ${pokemon} not found.`);
+		if (natureObj.minus && natureObj.plus) {
+			let swap = template.baseStats[natureObj.minus];
+			template.baseStats[natureObj.minus] = template.baseStats[natureObj.plus];
+			template.baseStats[natureObj.plus] = swap;
+			template.tier = 'NS';
+		}
+		this.sendReply(`|raw|${Chat.getDataPokemonHTML(template)}`);
+	},
+	natureswapshelp: [`/ns OR /natureswap <pokemon> - Shows the base stats that a Pokemon would have in Nature Swap. Usage: /ns <Nature> <Pokemon>.`],
+
+	'!crossevolve': true,
+	ce: 'crossevolve',
+	crossevo: 'crossevolve',
+	crossevolve(target, user, room) {
+		if (!this.runBroadcast()) return;
+		if (!target || !target.includes(',')) return this.parse(`/help crossevo`);
+
+		const pokes = target.split(',');
+		const template = Dex.getTemplate(pokes[0]);
+		const crossTemplate = Dex.getTemplate(pokes[1]);
+
+		if (!template.exists) return this.errorReply(`Error: Pokemon '${pokes[0]}' not found.`);
+		if (!crossTemplate.exists) return this.errorReply(`Error: Pokemon '${pokes[1]}' not found.`);
+
+		if (!template.evos.length) return this.errorReply(`Error: ${template.species} does not evolve.`);
+		if (!crossTemplate.prevo) return this.errorReply(`Error: ${crossTemplate.species} does not have a prevolution.`);
+
+		let setStage = 1;
+		let crossStage = 1;
+		if (template.prevo) {
+			setStage++;
+			if (Dex.getTemplate(template.prevo).prevo) {
+				setStage++;
+			}
+		}
+		const prevo = Dex.getTemplate(crossTemplate.prevo);
+		if (crossTemplate.prevo) {
+			crossStage++;
+			if (prevo.prevo) {
+				crossStage++;
+			}
+		}
+		if (setStage + 1 !== crossStage) {
+			return this.errorReply(`Error: Cross evolution must follow evolutionary stages. (${template.species} is Stage ${setStage} and can only cross evolve to Stage ${setStage + 1})`);
+		}
+		const mixedTemplate = Dex.deepClone(template);
+		mixedTemplate.abilities = Dex.deepClone(crossTemplate.abilities);
+		mixedTemplate.baseStats = Dex.deepClone(mixedTemplate.baseStats);
+		for (let statName in template.baseStats) {
+			// @ts-ignore
+			mixedTemplate.baseStats[statName] += crossTemplate.baseStats[statName] - prevo.baseStats[statName];
+		}
+		mixedTemplate.types = [template.types[0]];
+		if (template.types[1]) mixedTemplate.types.push(template.types[1]);
+		if (crossTemplate.types[0] !== prevo.types[0]) mixedTemplate.types[0] = crossTemplate.types[0];
+		if (crossTemplate.types[1] !== prevo.types[1]) mixedTemplate.types[1] = crossTemplate.types[1] || crossTemplate.types[0];
+		if (mixedTemplate.types[0] === mixedTemplate.types[1]) mixedTemplate.types = [mixedTemplate.types[0]];
+		mixedTemplate.weightkg += crossTemplate.weightkg - prevo.weightkg;
+		if (mixedTemplate.weightkg <= 0) {
+			mixedTemplate.weightkg = 0.1;
+		}
+		for (const stat of Object.values(mixedTemplate.baseStats)) {
+			if (stat < 1 || stat > 255) {
+				this.errorReply(`Warning: This Cross Evolution cannot happen since a stat goes below 0 or above 255.`);
+				break;
+			}
+		}
+		mixedTemplate.tier = "CE";
+		let weighthit = 20;
+		if (mixedTemplate.weightkg >= 200) {
+			weighthit = 120;
+		} else if (mixedTemplate.weightkg >= 100) {
+			weighthit = 100;
+		} else if (mixedTemplate.weightkg >= 50) {
+			weighthit = 80;
+		} else if (mixedTemplate.weightkg >= 25) {
+			weighthit = 60;
+		} else if (mixedTemplate.weightkg >= 10) {
+			weighthit = 40;
+		}
+		/** @type {{[k: string]: string}} */
+		let details = {
+			"Dex#": mixedTemplate.num,
+			"Gen": mixedTemplate.gen,
+			"Height": mixedTemplate.heightm + " m",
+			"Weight": mixedTemplate.weightkg + " kg <em>(" + weighthit + " BP)</em>",
+			"Dex Colour": mixedTemplate.color,
+		};
+		if (mixedTemplate.eggGroups) details["Egg Group(s)"] = mixedTemplate.eggGroups.join(", ");
+		details['<font color="#686868">Does Not Evolve</font>'] = "";
+		this.sendReply(`|raw|${Chat.getDataPokemonHTML(mixedTemplate)}`);
+		this.sendReply('|raw|<font size="1">' + Object.keys(details).map(detail => {
+			if (details[detail] === '') return detail;
+			return '<font color="#686868">' + detail + ':</font> ' + details[detail];
+		}).join("&nbsp;|&ThickSpace;") + '</font>');
+	},
+	crossevolvehelp: ["/crossevo <base pokemon>, <evolved pokemon> - Shows the type and stats for the Cross Evolved Pokemon."],
 };
 
 exports.commands = commands;

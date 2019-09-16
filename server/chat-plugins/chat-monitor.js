@@ -1,6 +1,7 @@
 'use strict';
 
-const FS = require('../../lib/fs');
+/** @type {typeof import('../../lib/fs').FS} */
+const FS = require(/** @type {any} */('../../.lib-dist/fs')).FS;
 
 const MONITOR_FILE = 'config/chat-plugins/chat-monitor.tsv';
 const WRITE_THROTTLE_TIME = 5 * 60 * 1000;
@@ -225,9 +226,9 @@ let chatfilter = function (message, user, room) {
 
 /** @type {NameFilter} */
 let namefilter = function (name, user) {
-	let id = toId(name);
+	let id = toID(name);
 	if (Chat.namefilterwhitelist.has(id)) return name;
-	if (id === user.trackRename) return '';
+	if (id === toID(user.trackRename)) return '';
 	let lcName = name.replace(/\u039d/g, 'N').toLowerCase().replace(/[\u200b\u007F\u00AD]/g, '').replace(/\u03bf/g, 'o').replace(/\u043e/g, 'o').replace(/\u0430/g, 'a').replace(/\u0435/g, 'e').replace(/\u039d/g, 'e');
 	// Remove false positives.
 	lcName = lcName.replace('herapist', '').replace('grape', '').replace('scrape', '');
@@ -246,9 +247,7 @@ let namefilter = function (name, user) {
 			}
 			if (matched) {
 				if (Chat.monitors[list].punishment === 'AUTOLOCK') {
-					Punishments.autolock(user, Rooms('staff'), `NameMonitor`, `inappropriate name: ${name}`, `using an inappropriate name: ${name} (from ${user.name})`, false, name);
-				} else {
-					user.trackRename = name;
+					Punishments.autolock(user, Rooms.get('staff'), `NameMonitor`, `inappropriate name: ${name}`, `using an inappropriate name: ${name} (from ${user.name})`, false, name);
 				}
 				line[3]++;
 				saveFilters();
@@ -256,14 +255,23 @@ let namefilter = function (name, user) {
 			}
 		}
 	}
-
-	if (user.trackRename) {
-		Monitor.log(`[NameMonitor] Username used: ${name} (forcerenamed from ${user.trackRename})`);
-		user.trackRename = '';
-	}
 	return name;
 };
+/** @type {LoginFilter} */
+let loginfilter = function (user) {
+	if (user.namelocked) return;
 
+	const forceRenamed = Chat.forceRenames.get(user.userid);
+	if (user.trackRename) {
+		Rooms.global.notifyRooms([/** @type {RoomID} */('staff')], `|html|[NameMonitor] Username used: <span class="username">${user.name}</span> ${user.getAccountStatusString()} (${forceRenamed ? 'automatically ' : ''}forcerenamed from <span class="username">${user.trackRename}</span>)`);
+		user.trackRename = '';
+	}
+	if (Chat.namefilterwhitelist.has(user.userid)) return;
+	if (typeof forceRenamed === 'number') {
+		const count = forceRenamed ? ` (forcerenamed ${forceRenamed} time${Chat.plural(forceRenamed)})` : '';
+		Rooms.global.notifyRooms([/** @type {RoomID} */('staff')], Chat.html`|html|[NameMonitor] Forcerenamed name being reused${count}: <span class="username">${user.name}</span> ${user.getAccountStatusString()}`);
+	}
+};
 /** @type {NameFilter} */
 let nicknamefilter = function (name, user) {
 	let lcName = name.replace(/\u039d/g, 'N').toLowerCase().replace(/[\u200b\u007F\u00AD]/g, '').replace(/\u03bf/g, 'o').replace(/\u043e/g, 'o').replace(/\u0430/g, 'a').replace(/\u0435/g, 'e').replace(/\u039d/g, 'e');
@@ -284,7 +292,7 @@ let nicknamefilter = function (name, user) {
 			}
 			if (matched) {
 				if (Chat.monitors[list].punishment === 'AUTOLOCK') {
-					Punishments.autolock(user, Rooms('staff'), `NameMonitor`, `inappropriate Pokémon nickname: ${name}`, `${user.name} - using an inappropriate Pokémon nickname: ${name}`, false, user.name);
+					Punishments.autolock(user, Rooms.get('staff'), `NameMonitor`, `inappropriate Pokémon nickname: ${name}`, `${user.name} - using an inappropriate Pokémon nickname: ${name}`, true);
 				}
 				line[3]++;
 				saveFilters();
@@ -295,18 +303,50 @@ let nicknamefilter = function (name, user) {
 
 	return name;
 };
+/** @type {StatusFilter} */
+let statusfilter = function (status, user) {
+	let lcStatus = status.replace(/\u039d/g, 'N').toLowerCase().replace(/[\u200b\u007F\u00AD]/g, '').replace(/\u03bf/g, 'o').replace(/\u043e/g, 'o').replace(/\u0430/g, 'a').replace(/\u0435/g, 'e').replace(/\u039d/g, 'e');
+	// Remove false positives.
+	lcStatus = lcStatus.replace('herapist', '').replace('grape', '').replace('scrape', '');
+	// Check for blatant staff impersonation attempts. Ideally this could be completely generated from Config.grouplist
+	// for better support for side servers, but not all ranks are staff ranks or should necessarily be filted.
+	if (/\b(?:global|room|upper|senior)?\s*(?:staff|admin|administrator|leader|owner|founder|mod|moderator|driver|voice|operator|sysop|creator)\b/gi.test(lcStatus)) {
+		return '';
+	}
 
-/** @typedef {(query: string[], user: User, connection: Connection) => (string | null | void)} PageHandler */
-/** @typedef {{[k: string]: PageHandler | PageTable}} PageTable */
+	for (const list in filterWords) {
+		for (let line of filterWords[list]) {
+			const word = line[0];
+
+			let matched;
+			if (typeof word !== 'string') {
+				matched = word.test(lcStatus);
+			} else if (word.startsWith('\\b') || word.endsWith('\\b')) {
+				matched = new RegExp(word).test(lcStatus);
+			} else {
+				matched = lcStatus.includes(word);
+			}
+			if (matched) {
+				if (Chat.monitors[list].punishment === 'AUTOLOCK') {
+					Punishments.autolock(user, Rooms.get('staff'), `NameMonitor`, `inappropriate status message: ${status}`, `${user.name} - using an inappropriate status: ${status}`, true);
+				}
+				line[3]++;
+				saveFilters();
+				return '';
+			}
+		}
+	}
+
+	return status;
+};
 
 /** @type {PageTable} */
 const pages = {
 	filters(query, user, connection) {
 		if (!user.named) return Rooms.RETRY_AFTER_LOGIN;
-		let buf = `|title|Filters\n|pagehtml|<div class="pad ladder"><h2>Filters</h2>`;
-		if (!user.can('lock')) {
-			return buf + `<p>Access denied</p></div>`;
-		}
+		this.title = 'Filters';
+		let buf = `<div class="pad ladder"><h2>Filters</h2>`;
+		if (!this.can('lock')) return;
 		let content = ``;
 		for (const key in Chat.monitors) {
 			content += `<tr><th colspan="2"><h3>${Chat.monitors[key].label} <span style="font-size:8pt;">[${key}]</span></h3></tr></th>`;
@@ -345,11 +385,11 @@ exports.pages = pages;
 let commands = {
 	filters: 'filter',
 	filter: {
-		add: function (target, room, user) {
+		add(target, room, user) {
 			if (!this.can('updateserver')) return false;
 
 			let [list, ...rest] = target.split(',');
-			list = toId(list);
+			list = toID(list);
 
 			if (!list || !rest.length) return this.errorReply("Syntax: /filter add list, word, reason");
 
@@ -390,11 +430,11 @@ let commands = {
 				return this.sendReply(`'${word}' was added to the ${list} list.`);
 			}
 		},
-		remove: function (target, room, user) {
+		remove(target, room, user) {
 			if (!this.can('updateserver')) return false;
 
 			let [list, ...words] = target.split(',').map(param => param.trim());
-			list = toId(list);
+			list = toID(list);
 
 			if (!list || !words.length) return this.errorReply("Syntax: /filter remove list, words");
 
@@ -404,43 +444,45 @@ let commands = {
 				const notFound = words.filter(val => !filterWords[list].filter(entry => String(entry[0]).slice(1, -3) === val).length);
 				if (notFound.length) return this.errorReply(`${notFound.join(', ')} ${Chat.plural(notFound, "are", "is")} not on the ${list} list.`);
 				filterWords[list] = filterWords[list].filter(entry => !words.includes(String(entry[0]).slice(1, -3)));
-				this.globalModlog(`REMOVEFILTER`, null, `'${words.join(', ')}' from ${list} list by ${user.name}`);
-				saveFilters(true);
-				return this.sendReply(`'${words.join(', ')}' ${Chat.plural(words, "were", "was")} removed from the ${list} list.`);
+			} else if (Chat.monitors[list].punishment === 'SHORTENER') {
+				const notFound = words.filter(val => !filterWords[list].filter(entry => String(entry[0]).slice(3, -3).replace(/\\./g, '.') === val).length);
+				if (notFound.length) return this.errorReply(`${notFound.join(', ')} ${Chat.plural(notFound, "are", "is")} not on the ${list} list.`);
+				filterWords[list] = filterWords[list].filter(entry => !words.includes(String(entry[0]).slice(3, -3).replace(/\\./g, '.')));
 			} else {
 				const notFound = words.filter(val => !filterWords[list].filter(entry => entry[0] === val).length);
 				if (notFound.length) return this.errorReply(`${notFound.join(', ')} ${Chat.plural(notFound, "are", "is")} not on the ${list} list.`);
 				filterWords[list] = filterWords[list].filter(entry => !words.includes(String(entry[0]))); // This feels wrong
-				this.globalModlog(`REMOVEFILTER`, null, `'${words.join(', ')}' from ${list} list by ${user.name}`);
-				saveFilters(true);
-				return this.sendReply(`'${words.join(', ')}' ${Chat.plural(words, "were", "was")} removed from the ${list} list.`);
 			}
+			this.globalModlog(`REMOVEFILTER`, null, `'${words.join(', ')}' from ${list} list by ${user.name}`);
+			saveFilters(true);
+			return this.sendReply(`'${words.join(', ')}' ${Chat.plural(words, "were", "was")} removed from the ${list} list.`);
 		},
 		'': 'view',
 		list: 'view',
-		view: function (target, room, user) {
+		view(target, room, user) {
 			this.parse(`/join view-filters`);
 		},
-		help: function (target, room, user) {
+		help(target, room, user) {
 			this.parse(`/help filter`);
 		},
 	},
 	filterhelp: [
 		`- /filter add list, word, reason - Adds a word to the given filter list. Requires: ~`,
 		`- /filter remove list, words - Removes words from the given filter list. Requires: ~`,
-		`- /filter view - Opens the list of filtered words. Requires: % @ * & ~`,
+		`- /filter view - Opens the list of filtered words. Requires: % @ & ~`,
 	],
-	allowname: function (target, room, user) {
+	allowname(target, room, user) {
 		if (!this.can('forcerename')) return false;
-		target = toId(target);
+		target = toID(target);
 		if (!target) return this.errorReply(`Syntax: /allowname username`);
 		Chat.namefilterwhitelist.set(target, user.name);
 
 		const msg = `${target} was allowed as a username by ${user.name}.`;
-		const staffRoom = Rooms('staff');
-		const upperStaffRoom = Rooms('upperstaff');
+		const staffRoom = Rooms.get('staff');
+		const upperStaffRoom = Rooms.get('upperstaff');
 		if (staffRoom) staffRoom.add(msg).update();
 		if (upperStaffRoom) upperStaffRoom.add(msg).update();
+		this.globalModlog(`ALLOWNAME`, null, `${target} by ${user.name}`);
 	},
 };
 
@@ -448,3 +490,5 @@ exports.commands = commands;
 exports.chatfilter = chatfilter;
 exports.namefilter = namefilter;
 exports.nicknamefilter = nicknamefilter;
+exports.statusfilter = statusfilter;
+exports.loginfilter = loginfilter;

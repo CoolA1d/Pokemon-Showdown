@@ -19,7 +19,7 @@ class Hangman extends Rooms.RoomGame {
 
 		this.gameNumber = ++room.gameNumber;
 
-		this.gameid = 'hangman';
+		this.gameid = /** @type {ID} */ ('hangman');
 		this.title = 'Hangman';
 		this.creator = user.userid;
 		this.word = word;
@@ -51,12 +51,12 @@ class Hangman extends Rooms.RoomGame {
 		if (user.userid === this.creator) return user.sendTo(this.room, "You can't guess in your own hangman game.");
 
 		let sanitized = word.replace(/[^A-Za-z ]/g, '');
-		let normalized = toId(sanitized);
+		let normalized = toID(sanitized);
 		if (normalized.length < 1) return user.sendTo(this.room, "Guess too short.");
 		if (sanitized.length > 30) return user.sendTo(this.room, "Guess too long.");
 
 		for (const guessid of this.guesses) {
-			if (normalized === toId(guessid)) return user.sendTo(this.room, "Your guess has already been guessed.");
+			if (normalized === toID(guessid)) return user.sendTo(this.room, "Your guess has already been guessed.");
 		}
 
 		if (sanitized.length > 1) {
@@ -111,8 +111,8 @@ class Hangman extends Rooms.RoomGame {
 	 * @param {string} guesser
 	 */
 	guessWord(word, guesser) {
-		let ourWord = toId(this.word);
-		let guessedWord = toId(word);
+		let ourWord = toID(this.word);
+		let guessedWord = toID(word);
 		if (ourWord === guessedWord) {
 			for (let [i, letter] of this.wordSoFar.entries()) {
 				if (letter === '_') {
@@ -135,7 +135,7 @@ class Hangman extends Rooms.RoomGame {
 	}
 
 	hangingMan() {
-		return `<img width="120" height="120" src="//play.pokemonshowdown.com/fx/hangman${this.incorrectGuesses === -1 ? 7 : this.incorrectGuesses}.png" />`;
+		return `<img width="120" height="120" src="//${Config.routes.client}/fx/hangman${this.incorrectGuesses === -1 ? 7 : this.incorrectGuesses}.png" />`;
 	}
 
 	generateWindow() {
@@ -221,8 +221,8 @@ class Hangman extends Rooms.RoomGame {
 const commands = {
 	hangman: {
 		create: 'new',
-		new: function (target, room, user, connection) {
-			let text = Chat.filter(this, target, user, room, connection);
+		new(target, room, user, connection) {
+			let text = this.filter(target);
 			if (target !== text) return this.errorReply("You are not allowed to use filtered words in hangmans.");
 			let params = text.split(',');
 
@@ -250,11 +250,11 @@ const commands = {
 			game.display(user, true);
 
 			this.modlog('HANGMAN');
-			return this.privateModAction(`(A game of hangman was started by ${user.name}.)`);
+			return this.addModAction(`A game of hangman was started by ${user.name}.`);
 		},
-		createhelp: ["/hangman create [word], [hint] - Makes a new hangman game. Requires: % @ * # & ~"],
+		createhelp: ["/hangman create [word], [hint] - Makes a new hangman game. Requires: % @ # & ~"],
 
-		guess: function (target, room, user) {
+		guess(target, room, user) {
 			if (!target) return this.parse('/help guess');
 			if (!room.game || room.game.gameid !== 'hangman') return this.errorReply("There is no game of hangman running in this room.");
 			if (!this.canTalk()) return;
@@ -268,7 +268,7 @@ const commands = {
 		],
 
 		stop: 'end',
-		end: function (target, room, user) {
+		end(target, room, user) {
 			if (!this.can('minigame', null, room)) return false;
 			if (!this.canTalk()) return;
 			if (!room.game || room.game.gameid !== 'hangman') return this.errorReply("There is no game of hangman running in this room.");
@@ -278,9 +278,9 @@ const commands = {
 			this.modlog('ENDHANGMAN');
 			return this.privateModAction(`(The game of hangman was ended by ${user.name}.)`);
 		},
-		endhelp: ["/hangman end - Ends the game of hangman before the man is hanged or word is guessed. Requires: % @ * # & ~"],
+		endhelp: ["/hangman end - Ends the game of hangman before the man is hanged or word is guessed. Requires: % @ # & ~"],
 
-		disable: function (target, room, user) {
+		disable(target, room, user) {
 			if (!this.can('gamemanagement', null, room)) return;
 			// @ts-ignore
 			if (room.hangmanDisabled) {
@@ -296,7 +296,7 @@ const commands = {
 			return this.sendReply("Hangman has been disabled for this room.");
 		},
 
-		enable: function (target, room, user) {
+		enable(target, room, user) {
 			if (!this.can('gamemanagement', null, room)) return;
 			// @ts-ignore
 			if (!room.hangmanDisabled) {
@@ -312,7 +312,7 @@ const commands = {
 			return this.sendReply("Hangman has been enabled for this room.");
 		},
 
-		display: function (target, room, user) {
+		display(target, room, user) {
 			if (!room.game || room.game.title !== 'Hangman') return this.errorReply("There is no game of hangman running in this room.");
 			if (!this.runBroadcast()) return;
 			room.update();
@@ -321,7 +321,7 @@ const commands = {
 			game.display(user, this.broadcasting);
 		},
 
-		'': function (target, room, user) {
+		''(target, room, user) {
 			return this.parse('/help hangman');
 		},
 	},
@@ -329,15 +329,15 @@ const commands = {
 	hangmanhelp: [
 		`/hangman allows users to play the popular game hangman in PS rooms.`,
 		`Accepts the following commands:`,
-		`/hangman create [word], [hint] - Makes a new hangman game. Requires: % @ * # & ~`,
+		`/hangman create [word], [hint] - Makes a new hangman game. Requires: % @ # & ~`,
 		`/hangman guess [letter] - Makes a guess for the letter entered.`,
 		`/hangman guess [word] - Same as a letter, but guesses an entire word.`,
 		`/hangman display - Displays the game.`,
-		`/hangman end - Ends the game of hangman before the man is hanged or word is guessed. Requires: % @ * # & ~`,
+		`/hangman end - Ends the game of hangman before the man is hanged or word is guessed. Requires: % @ # & ~`,
 		`/hangman [enable/disable] - Enables or disables hangman from being started in a room. Requires: # & ~`,
 	],
 
-	guess: function (target, room, user) {
+	guess(target, room, user) {
 		if (!room.game) return this.errorReply("There is no game running in this room.");
 		if (!this.canTalk()) return;
 		// @ts-ignore

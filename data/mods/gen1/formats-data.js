@@ -217,7 +217,7 @@ let BattleFormatsData = {
 		tier: "UU",
 	},
 	zubat: {
-		randomBattleMoves: ["screech", "confuseray", "doubleedge", "megadrain"],
+		randomBattleMoves: ["toxic", "confuseray", "doubleedge", "megadrain"],
 		tier: "LC",
 	},
 	golbat: {
@@ -719,9 +719,8 @@ let BattleFormatsData = {
 		tier: "UU",
 	},
 	omanyte: {
-		randomBattleMoves: ["hydropump", "surf", "bodyslam"],
-		essentialMove: "seismictoss",
-		exclusiveMoves: ["blizzard", "blizzard"],
+		randomBattleMoves: ["hydropump", "surf", "bodyslam", "rest"],
+		essentialMove: "blizzard",
 		comboMoves: ["surf", "hydropump"],
 		tier: "LC",
 	},

@@ -20,7 +20,7 @@
  *   rooms.js. There's also a global room which every user is in, and
  *   handles miscellaneous things like welcoming the user.
  *
- * Dex - from sim/dex.js
+ * Dex - from .sim-dist/dex.js
  *
  *   Handles getting data about Pokemon, items, etc.
  *
@@ -50,40 +50,35 @@
 try {
 	// I've gotten enough reports by people who don't use the launch
 	// script that this is worth repeating here
-	eval('{ let a = async () => {}; }');
+	RegExp("\\p{Emoji}", "u");
 } catch (e) {
-	throw new Error("We require Node.js version 8 or later; you're using " + process.version);
+	throw new Error("We require Node.js version 10 or later; you're using " + process.version);
 }
 try {
-	require.resolve('sockjs');
+	require.resolve('../.sim-dist/index');
 } catch (e) {
-	throw new Error("Dependencies are unmet; run node pokemon-showdown before launching Pokemon Showdown again.");
+	throw new Error("Dependencies are unmet; run `node build` before launching Pokemon Showdown again.");
 }
 
-const FS = require('../lib/fs');
+const FS = require('../.lib-dist/fs').FS;
 
 /*********************************************************
  * Load configuration
  *********************************************************/
 
-try {
-	// @ts-ignore This file doesn't exist on the repository, so Travis checks fail if this isn't ignored
-	require.resolve('../config/config');
-} catch (err) {
-	if (err.code !== 'MODULE_NOT_FOUND') throw err; // should never happen
-	throw new Error('config.js does not exist; run node pokemon-showdown to set up the default config file before launching Pokemon Showdown again.');
-}
-// @ts-ignore This file doesn't exist on the repository, so Travis checks fail if this isn't ignored
-global.Config = require('../config/config');
+const ConfigLoader = require('../.server-dist/config-loader');
+global.Config = ConfigLoader.Config;
 
-global.Monitor = require('./monitor');
+global.Monitor = require('../.server-dist/monitor').Monitor;
+global.__version = {head: ''};
+Monitor.version().then(function (hash) {
+	global.__version.tree = hash;
+});
 
 if (Config.watchconfig) {
-	let configPath = require.resolve('../config/config');
-	FS(configPath).onModify(() => {
+	FS(require.resolve('../config/config')).onModify(() => {
 		try {
-			delete require.cache[configPath];
-			global.Config = require('../config/config');
+			global.Config = ConfigLoader.load(true);
 			if (global.Users) Users.cacheGroupData();
 			Monitor.notice('Reloaded ../config/config.js');
 		} catch (e) {
@@ -96,28 +91,28 @@ if (Config.watchconfig) {
  * Set up most of our globals
  *********************************************************/
 
-global.Dex = require('../sim/dex');
-global.toId = Dex.getId;
+global.Dex = require('../.sim-dist/dex').Dex;
+global.toID = Dex.getId;
 
-global.LoginServer = require('./loginserver');
+global.LoginServer = require('../.server-dist/loginserver').LoginServer;
 
-global.Ladders = require('./ladders');
+global.Ladders = require('../.server-dist/ladders').Ladders;
 
-global.Users = require('./users');
+global.Chat = require('../.server-dist/chat').Chat;
 
-global.Punishments = require('./punishments');
+global.Users = require('../.server-dist/users').Users;
 
-global.Chat = require('./chat');
+global.Punishments = require('../.server-dist/punishments').Punishments;
 
-global.Rooms = require('./rooms');
+global.Rooms = require('../.server-dist/rooms').Rooms;
 
-global.Verifier = require('./verifier');
+global.Verifier = require('../.server-dist/verifier');
 Verifier.PM.spawn();
 
-global.Tournaments = require('./tournaments');
+global.Tournaments = require('../.server-dist/tournaments').Tournaments;
 
-global.Dnsbl = require('./dnsbl');
-Dnsbl.loadDatacenters();
+global.IPTools = require('../.server-dist/ip-tools').IPTools;
+IPTools.loadDatacenters();
 
 if (Config.crashguard) {
 	// graceful crash - allow current battles to finish before restarting
@@ -159,4 +154,4 @@ TeamValidatorAsync.PM.spawn();
  * Start up the REPL server
  *********************************************************/
 
-require('../lib/repl').start('app', cmd => eval(cmd));
+require('../.lib-dist/repl').Repl.start('app', cmd => eval(cmd));

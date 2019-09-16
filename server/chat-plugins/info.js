@@ -4,13 +4,14 @@
  *
  * These are informational commands. For instance, you can define the command
  * 'whois' here, then use it by typing /whois into Pokemon Showdown.
- *
  * For the API, see chat-plugins/COMMANDS.md
  *
  * @license MIT license
  */
 
 'use strict';
+
+const net = require('net');
 
 /** @type {ChatCommands} */
 const commands = {
@@ -21,7 +22,7 @@ const commands = {
 	alt: 'whois',
 	alts: 'whois',
 	whoare: 'whois',
-	whois: function (target, room, user, connection, cmd) {
+	whois(target, room, user, connection, cmd) {
 		if (room && room.id === 'staff' && !this.runBroadcast()) return;
 		if (!room) room = Rooms.global;
 		let targetUser = this.targetUserOrSelf(target, user.group === ' ');
@@ -36,7 +37,11 @@ const commands = {
 
 		let buf = Chat.html`<strong class="username"><small style="display:none">${targetUser.group}</small>${targetUser.name}</strong> `;
 		const ac = targetUser.autoconfirmed;
-		if (ac && showAll) buf += ` <small style="color:gray">(ac${targetUser.userid === ac ? `` : `: ${ac}`})</small>`;
+		if (ac && showAll) buf += ` <small style="color:gray">(ac${targetUser.userid === ac ? `` : `: <span class="username">${ac}</span>`})</small>`;
+		const trusted = targetUser.trusted;
+		if (trusted && showAll) {
+			buf += ` <small style="color:gray">(trusted${targetUser.userid === trusted ? `` : `: <span class="username">${trusted}</span>`})</small>`;
+		}
 		if (!targetUser.connected) buf += ` <em style="color:gray">(offline)</em>`;
 		let roomauth = '';
 		if (room.auth && targetUser.userid in room.auth) roomauth = room.auth[targetUser.userid];
@@ -171,11 +176,11 @@ const commands = {
 					}
 					status.push(sharedStr);
 				}
-				return ip + (status.length ? ` (${status.join('; ')})` : '');
+				return `<a href="https://whatismyipaddress.com/ip/${ip}" target="_blank">${ip}</a>` + (status.length ? ` (${status.join('; ')})` : '');
 			});
 			buf += `<br /> IP${Chat.plural(ips)}: ${ips.join(", ")}`;
 			if (user.group !== ' ' && targetUser.latestHost) {
-				buf += Chat.html`<br />Host: ${targetUser.latestHost}`;
+				buf += Chat.html`<br />Host: ${targetUser.latestHost} [${targetUser.latestHostType}]`;
 			}
 		}
 		if (canViewAlts && hiddenrooms) {
@@ -188,8 +193,8 @@ const commands = {
 		let gameRooms = [];
 		for (const room of Rooms.rooms.values()) {
 			if (!room.game) continue;
-			if ((targetUser.userid in room.game.players && !targetUser.inRooms.has(room.id)) ||
-				room.auth[targetUser.userid] === Users.PLAYER_SYMBOL) {
+			if ((targetUser.userid in room.game.playerTable && !targetUser.inRooms.has(room.id)) ||
+				(room.auth && room.auth[targetUser.userid] === Users.PLAYER_SYMBOL)) {
 				if (room.isPrivate && !canViewAlts) {
 					continue;
 				}
@@ -227,18 +232,18 @@ const commands = {
 	},
 	whoishelp: [
 		`/whois - Get details on yourself: alts, group, IP address, and rooms.`,
-		`/whois [username] - Get details on a username: alts (Requires: % @ * & ~), group, IP address (Requires: @ * & ~), and rooms.`,
+		`/whois [username] - Get details on a username: alts (Requires: % @ & ~), group, IP address (Requires: @ & ~), and rooms.`,
 	],
 
 	'!offlinewhois': true,
 	checkpunishment: 'offlinewhois',
-	offlinewhois: function (target, room, user) {
+	offlinewhois(target, room, user) {
 		if (!user.trusted) {
 			return this.errorReply("/offlinewhois - Access denied.");
 		}
-		let userid = toId(target);
+		let userid = toID(target);
 		if (!userid) return this.errorReply("Please enter a valid username.");
-		let targetUser = Users(userid);
+		let targetUser = Users.get(userid);
 		let buf = Chat.html`<strong class="username">${target}</strong>`;
 		if (!targetUser || !targetUser.connected) buf += ` <em style="color:gray">(offline)</em>`;
 
@@ -299,14 +304,29 @@ const commands = {
 		this.sendReplyBox(buf);
 	},
 
+	sp: 'showpunishments',
+	showpunishments(target, room, user) {
+		if (!room.chatRoomData || room.id.includes('-')) return this.errorReply("This command is unavailable in temporary rooms.");
+		return this.parse(`/join view-punishments-${room}`);
+	},
+	showpunishmentshelp: [`/showpunishments - Shows the current punishments in the room. Requires: % @ # & ~`],
+
+	sgp: 'showglobalpunishments',
+	showglobalpunishments(target, room, user) {
+		if (!this.can('lock')) return;
+		return this.parse(`/join view-globalpunishments`);
+	},
+	showglobalpunishmentshelp: [`/showpunishments - Shows the current global punishments. Requires: % @ # & ~`],
+
 	'!host': true,
-	host: function (target, room, user, connection, cmd) {
+	host(target, room, user, connection, cmd) {
 		if (!target) return this.parse('/help host');
 		if (!this.can('rangeban')) return;
 		target = target.trim();
-		if (!/^[0-9.]+$/.test(target)) return this.errorReply('You must pass a valid IPv4 IP to /host.');
-		Dnsbl.reverse(target).then(host => {
-			this.sendReply('IP ' + target + ': ' + (host || "ERROR"));
+		if (!net.isIPv4(target)) return this.errorReply('You must pass a valid IPv4 IP to /host.');
+		IPTools.lookup(target).then(({dnsbl, host, hostType}) => {
+			const dnsblMessage = dnsbl ? ` [${dnsbl}]` : ``;
+			this.sendReply(`IP ${target}: ${host || "ERROR"} [${hostType}]${dnsblMessage}`);
 		});
 	},
 	hosthelp: [`/host [ip] - Gets the host for a given IP. Requires: & ~`],
@@ -315,12 +335,12 @@ const commands = {
 	searchip: 'ipsearch',
 	ipsearchall: 'ipsearch',
 	hostsearch: 'ipsearch',
-	ipsearch: function (target, room, user, connection, cmd) {
+	ipsearch(target, room, user, connection, cmd) {
 		if (!target.trim()) return this.parse(`/help ipsearch`);
 		if (!this.can('rangeban')) return;
 
 		let [ip, roomid] = this.splitOne(target);
-		let targetRoom = roomid ? Rooms(roomid) : null;
+		let targetRoom = roomid ? Rooms.get(roomid) : null;
 		if (!targetRoom && targetRoom !== null) return this.errorReply(`The room "${roomid}" does not exist.`);
 		let results = /** @type {string[]} */ ([]);
 		let isAll = (cmd === 'ipsearchall');
@@ -328,12 +348,12 @@ const commands = {
 		if (/[a-z]/.test(ip)) {
 			// host
 			this.sendReply(`Users with host ${ip}${targetRoom ? ` in the room ${targetRoom.title}` : ``}:`);
-			Users.users.forEach(curUser => {
-				if (results.length > 100 && !isAll) return;
-				if (!curUser.latestHost || !curUser.latestHost.endsWith(ip)) return;
-				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) return;
+			for (const curUser of Users.users.values()) {
+				if (results.length > 100 && !isAll) continue;
+				if (!curUser.latestHost || !curUser.latestHost.endsWith(ip)) continue;
+				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) continue;
 				results.push((curUser.connected ? " \u25C9 " : " \u25CC ") + " " + curUser.name);
-			});
+			}
 			if (results.length > 100 && !isAll) {
 				return this.sendReply(`More than 100 users match the specified IP range. Use /ipsearchall to retrieve the full list.`);
 			}
@@ -341,22 +361,22 @@ const commands = {
 			// IP range
 			this.sendReply(`Users in IP range ${ip}${targetRoom ? ` in the room ${targetRoom.title}` : ``}:`);
 			ip = ip.slice(0, -1);
-			Users.users.forEach(curUser => {
-				if (results.length > 100 && !isAll) return;
-				if (!curUser.latestIp.startsWith(ip)) return;
-				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) return;
+			for (const curUser of Users.users.values()) {
+				if (results.length > 100 && !isAll) continue;
+				if (!curUser.latestIp.startsWith(ip)) continue;
+				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) continue;
 				results.push((curUser.connected ? " \u25C9 " : " \u25CC ") + " " + curUser.name);
-			});
+			}
 			if (results.length > 100 && !isAll) {
 				return this.sendReply(`More than 100 users match the specified IP range. Use /ipsearchall to retrieve the full list.`);
 			}
 		} else {
 			this.sendReply(`Users with IP ${ip}${targetRoom ? ` in the room ${targetRoom.title}` : ``}:`);
-			Users.users.forEach(curUser => {
-				if (curUser.latestIp !== ip) return;
-				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) return;
+			for (const curUser of Users.users.values()) {
+				if (curUser.latestIp !== ip) continue;
+				if (targetRoom && !curUser.inRooms.has(targetRoom.id)) continue;
 				results.push((curUser.connected ? " \u25C9 " : " \u25CC ") + " " + curUser.name);
-			});
+			}
 		}
 		if (!results.length) {
 			if (!ip.includes('.')) return this.errorReply(`${ip} is not a valid IP or host.`);
@@ -366,7 +386,7 @@ const commands = {
 	},
 	ipsearchhelp: [`/ipsearch [ip|range|host], (room) - Find all users with specified IP, IP range, or host. If a room is provided only users in the room will be shown. Requires: & ~`],
 
-	checkchallenges: function (target, room, user) {
+	checkchallenges(target, room, user) {
 		if (!this.can('ban', null, room)) return false;
 		if (!this.runBroadcast(true)) return;
 		if (!this.broadcasting) {
@@ -404,14 +424,14 @@ const commands = {
 		}
 		this.sendReplyBox(challenges.join(`<br />`));
 	},
-	checkchallengeshelp: [`!checkchallenges [user1], [user2] - Check if the specified users are challenging each other. Requires: @ * # & ~`],
+	checkchallengeshelp: [`!checkchallenges [user1], [user2] - Check if the specified users are challenging each other. Requires: @ # & ~`],
 
 	/*********************************************************
 	 * Client fallback
 	 *********************************************************/
 
 	unignore: 'ignore',
-	ignore: function (target, room, user) {
+	ignore(target, room, user) {
 		if (!room) this.errorReply(`In PMs, this command can only be used by itself to ignore the person you're talking to: "/${this.cmd}", not "/${this.cmd} ${target}"`);
 		this.errorReply(`You're using a custom client that doesn't support the ignore command.`);
 	},
@@ -425,14 +445,14 @@ const commands = {
 	stats: 'data',
 	dex: 'data',
 	pokedex: 'data',
-	data: function (target, room, user, connection, cmd) {
+	data(target, room, user, connection, cmd) {
 		if (!this.runBroadcast()) return;
 
 		let buffer = '';
 		let sep = target.split(',');
 		if (sep.length !== 2) sep = [target];
 		target = sep[0].trim();
-		let targetId = toId(target);
+		let targetId = toID(target);
 		if (!targetId) return this.parse('/help data');
 		let targetNum = parseInt(target);
 		if (!isNaN(targetNum) && '' + targetNum === target) {
@@ -447,8 +467,8 @@ const commands = {
 		let mod = Dex;
 		/** @type {Format?} */
 		let format = null;
-		if (sep[1] && toId(sep[1]) in Dex.dexes) {
-			mod = Dex.mod(toId(sep[1]));
+		if (sep[1] && toID(sep[1]) in Dex.dexes) {
+			mod = Dex.mod(toID(sep[1]));
 		} else if (sep[1]) {
 			format = Dex.getFormat(sep[1]);
 			if (!format.exists) {
@@ -515,12 +535,34 @@ const commands = {
 					if (pokemon.color && mod.gen >= 5) details["Dex Colour"] = pokemon.color;
 					if (pokemon.eggGroups && mod.gen >= 2) details["Egg Group(s)"] = pokemon.eggGroups.join(", ");
 					let evos = /** @type {string[]} */ ([]);
-					pokemon.evos.forEach(evoName => {
+					for (const evoName of pokemon.evos) {
 						const evo = mod.getTemplate(evoName);
 						if (evo.gen <= mod.gen) {
-							evos.push(evo.name + " (" + evo.evoLevel + ")");
+							let condition = evo.evoCondition ? ` ${evo.evoCondition}` : ``;
+							switch (evo.evoType) {
+							case 'levelExtra':
+								evos.push(`${evo.name} (level-up${condition})`);
+								break;
+							case 'levelFriendship':
+								evos.push(`${evo.name} (level-up with high Friendship${condition})`);
+								break;
+							case 'levelHold':
+								evos.push(`${evo.name} (level-up holding ${evo.evoItem}${condition})`);
+								break;
+							case 'stone':
+								evos.push(`${evo.name} (${evo.evoItem})`);
+								break;
+							case 'levelMove':
+								evos.push(`${evo.name} (level-up with ${evo.evoMove}${condition})`);
+								break;
+							case 'trade':
+								evos.push(`${evo.name} (trade)`);
+								break;
+							default:
+								evos.push(`${evo.name} (${evo.evoLevel})`);
+							}
 						}
-					});
+					}
 					if (!evos.length) {
 						details['<font color="#686868">Does Not Evolve</font>'] = "";
 					} else {
@@ -578,6 +620,8 @@ const commands = {
 					if (move.flags['punch']) details["&#10003; Punch"] = "";
 					if (move.flags['powder']) details["&#10003; Powder"] = "";
 					if (move.flags['reflectable']) details["&#10003; Bounceable"] = "";
+					if (move.flags['charge']) details["&#10003; Two-turn move"] = "";
+					if (move.flags['recharge']) details["&#10003; Has recharge turn"] = "";
 					if (move.flags['gravity'] && mod.gen >= 4) details["&#10007; Suppressed by Gravity"] = "";
 					if (move.flags['dance'] && mod.gen >= 7) details["&#10003; Dance move"] = "";
 
@@ -628,10 +672,10 @@ const commands = {
 					}[move.target] || "Unknown";
 
 					if (move.id === 'snatch' && mod.gen >= 3) {
-						details['<a href="https://pokemonshowdown.com/dex/moves/snatch">Snatchable Moves</a>'] = '';
+						details[`<a href="https://${Config.routes.dex}/moves/snatch">Snatchable Moves</a>`] = '';
 					}
 					if (move.id === 'mirrormove') {
-						details['<a href="https://pokemonshowdown.com/dex/moves/mirrormove">Mirrorable Moves</a>'] = '';
+						details[`<a href="https://${Config.routes.dex}/moves/mirrormove">Mirrorable Moves</a>`] = '';
 					}
 					if (move.isUnreleased) {
 						details["Unreleased in Gen " + mod.gen] = "";
@@ -658,31 +702,39 @@ const commands = {
 	datahelp: [
 		`/data [pokemon/item/move/ability/nature] - Get details on this pokemon/item/move/ability/nature.`,
 		`/data [pokemon/item/move/ability/nature], Gen [generation number/format name] - Get details on this pokemon/item/move/ability/nature for that generation/format.`,
-		`!data [pokemon/item/move/ability/nature] - Show everyone these details. Requires: + % @ * # & ~`,
+		`!data [pokemon/item/move/ability/nature] - Show everyone these details. Requires: + % @ # & ~`,
 	],
 
 	'!details': true,
 	dt: 'details',
-	details: function (target) {
+	details(target) {
 		if (!target) return this.parse('/help details');
 		this.run('data');
 	},
 	detailshelp: [
 		`/details [pokemon/item/move/ability/nature] - Get additional details on this pokemon/item/move/ability/nature.`,
 		`/details [pokemon/item/move/ability/nature], Gen [generation number/format name] - Get details on this pokemon/item/move/ability/nature for that generation/format.`,
-		`!details [pokemon/item/move/ability/nature] - Show everyone these details. Requires: + % @ * # & ~`,
+		`!details [pokemon/item/move/ability/nature] - Show everyone these details. Requires: + % @ # & ~`,
 	],
 
 	'!weakness': true,
 	weaknesses: 'weakness',
 	weak: 'weakness',
 	resist: 'weakness',
-	weakness: function (target, room, user) {
+	weakness(target, room, user) {
 		if (!target) return this.parse('/help weakness');
 		if (!this.runBroadcast()) return;
 		target = target.trim();
 		let modName = target.split(',');
-		let mod = Dex.mod(toId(modName[modName.length - 1])) || Dex;
+		let mod = Dex;
+		/** @type {Format?} */
+		let format = null;
+		if (modName[modName.length - 1] && toID(modName[modName.length - 1]) in Dex.dexes) {
+			mod = Dex.mod(toID(modName[modName.length - 1]));
+		} else if (room && room.battle) {
+			format = Dex.getFormat(room.battle.format);
+			mod = Dex.mod(format.mod);
+		}
 		let targets = target.split(/ ?[,/] ?/);
 		/** @type {{types: string[], [k: string]: any}} */
 		let pokemon = mod.getTemplate(targets[0]);
@@ -695,12 +747,12 @@ const commands = {
 		} else {
 			let types = [];
 			if (type1.exists) {
-				types.push(type1.id);
+				types.push(type1.name);
 				if (type2.exists && type2 !== type1) {
-					types.push(type2.id);
+					types.push(type2.name);
 				}
 				if (type3.exists && type3 !== type1 && type3 !== type2) {
-					types.push(type3.id);
+					types.push(type3.name);
 				}
 			}
 
@@ -753,15 +805,15 @@ const commands = {
 	weaknesshelp: [
 		`/weakness [pokemon] - Provides a Pok\u00e9mon's resistances, weaknesses, and immunities, ignoring abilities.`,
 		`/weakness [type 1]/[type 2] - Provides a type or type combination's resistances, weaknesses, and immunities, ignoring abilities.`,
-		`!weakness [pokemon] - Shows everyone a Pok\u00e9mon's resistances, weaknesses, and immunities, ignoring abilities. Requires: + % @ * # & ~`,
-		`!weakness [type 1]/[type 2] - Shows everyone a type or type combination's resistances, weaknesses, and immunities, ignoring abilities. Requires: + % @ * # & ~`,
+		`!weakness [pokemon] - Shows everyone a Pok\u00e9mon's resistances, weaknesses, and immunities, ignoring abilities. Requires: + % @ # & ~`,
+		`!weakness [type 1]/[type 2] - Shows everyone a type or type combination's resistances, weaknesses, and immunities, ignoring abilities. Requires: + % @ # & ~`,
 	],
 
 	'!effectiveness': true,
 	eff: 'effectiveness',
 	type: 'effectiveness',
 	matchup: 'effectiveness',
-	effectiveness: function (target, room, user) {
+	effectiveness(target, room, user) {
 		let targets = target.split(/[,/]/).slice(0, 2);
 		if (targets.length !== 2) return this.errorReply("Attacker and defender must be separated with a comma.");
 
@@ -782,8 +834,8 @@ const commands = {
 					source = foundData;
 					atkName = foundData.name;
 				} else {
-					source = foundData.id;
-					atkName = foundData.id;
+					source = foundData.name;
+					atkName = foundData.name;
 				}
 				searchMethods = targetMethods;
 			} else if (!defender && targetMethods.includes(method)) {
@@ -791,8 +843,8 @@ const commands = {
 					defender = foundData;
 					defName = foundData.species + " (not counting abilities)";
 				} else {
-					defender = {types: [foundData.id]};
-					defName = foundData.id;
+					defender = {types: [foundData.name]};
+					defName = foundData.name;
 				}
 				searchMethods = sourceMethods;
 			}
@@ -825,14 +877,20 @@ const commands = {
 
 	'!coverage': true,
 	cover: 'coverage',
-	coverage: function (target, room, user) {
+	coverage(target, room, user) {
 		if (!this.runBroadcast()) return;
 		if (!target) return this.parse("/help coverage");
 
 		let targets = target.split(/[,+]/);
 		let sources = [];
-		let mod = Dex.mod(toId(targets[targets.length - 1])) || Dex;
-
+		let mod = Dex;
+		if (room && room.battle) {
+			let format = Dex.getFormat(room.battle.format);
+			mod = Dex.mod(format.mod);
+		}
+		if (targets[targets.length - 1] && toID(targets[targets.length - 1]) in Dex.dexes) {
+			mod = Dex.mod(toID(targets[targets.length - 1]));
+		}
 		let dispTable = false;
 		let bestCoverage = {};
 		let hasThousandArrows = false;
@@ -843,7 +901,7 @@ const commands = {
 		}
 
 		for (let arg of targets) {
-			arg = toId(arg);
+			arg = toID(arg);
 
 			// arg is the gen?
 			if (arg === mod.currentMod) continue;
@@ -940,7 +998,7 @@ const commands = {
 			let buffer = '<div class="scrollable"><table cellpadding="1" width="100%"><tr><th></th>';
 			let icon = {};
 			for (let type in mod.data.TypeChart) {
-				icon[type] = '<img src="https://play.pokemonshowdown.com/sprites/types/' + type + '.png" width="32" height="14">';
+				icon[type] = `<img src="https://${Config.routes.client}/sprites/types/${type}.png" width="32" height="14">`;
 				// row of icons at top
 				buffer += '<th>' + icon[type] + '</th>';
 			}
@@ -1014,7 +1072,7 @@ const commands = {
 	],
 
 	'!statcalc': true,
-	statcalc: function (target, room, user) {
+	statcalc(target, room, user) {
 		if (!target) return this.parse("/help statcalc");
 		if (!this.runBroadcast()) return;
 
@@ -1276,8 +1334,7 @@ const commands = {
 	 *********************************************************/
 
 	'!uptime': true,
-	uptime: function (target, room, user) {
-		if (!this.can('broadcast')) return false;
+	uptime(target, room, user) {
 		if (!this.runBroadcast()) return;
 		let uptime = process.uptime();
 		let uptimeText;
@@ -1293,252 +1350,88 @@ const commands = {
 	},
 
 	'!servertime': true,
-	servertime: function (target, room, user) {
+	servertime(target, room, user) {
 		if (!this.runBroadcast()) return;
 		let servertime = new Date();
 		this.sendReplyBox(`Server time: <b>${servertime.toLocaleString()}</b>`);
 	},
 
 	'!groups': true,
-	groups: function (target, room, user) {
+	groups(target, room, user) {
 		if (!this.runBroadcast()) return;
 		const showRoom = (target !== 'global');
 		const showGlobal = (target !== 'room' && target !== 'rooms');
-		const roomRanks = {
-			__proto__: null,
-			english: [
-				`<strong>Room ranks</strong>`,
-				`+ <strong>Voice</strong> - They can use ! commands like !groups`,
-				`% <strong>Driver</strong> - The above, and they can mute and warn`,
-				`@ <strong>Moderator</strong> - The above, and they can room ban users`,
-				`* <strong>Bot</strong> - Like Moderator, but makes it clear that this user is a bot`,
-				`# <strong>Room Owner</strong> - They are leaders of the room and can almost totally control it`,
-			],
-			portuguese: [
-				`<strong>Cargos da Sala</strong>`,
-				`+ <strong>Voice</strong> - Eles podem usar comandos com !, tal como !groups, e falar durante o chat moderado`,
-				`% <strong>Driver</strong> - O de cima, além de poderem dar mutes e avisos`,
-				`@ <strong>Moderator</strong> - O de cima, além de poderem banir usuários da sala`,
-				`* <strong>Bot</strong> - Igual ao cargo de Moderator, mas deixa claro que o usuário é um bot`,
-				`# <strong>Room Owners</strong> - Eles são os líderes da sala e podem controlá-la quase totalmente`,
-			],
-			spanish: [
-				`<strong>Rangos de Sala</strong>`,
-				`+ <strong>Voice</strong> - Pueden utilizar comandos con ! como !groups y hablar cuando haya modchat +`,
-				`% <strong>Driver</strong> - Lo mismo que arriba y además pueden sancionar dando advertencias o silenciando`,
-				`@ <strong>Moderator</strong> - Lo mismo que arriba y además pueden expulsar a usuarios de la sala`,
-				`* <strong>Bot</strong> - Igual que un moderador, pero el símbolo identifica que es un Bot`,
-				`# <strong>Room Owner</strong> - Líderes de la sala y tienen casi todo el control de lo que sucede en esta`,
-			],
-			italian: [
-				`<strong>Ruoli della Room</strong>`,
-				`+ <strong>Voice</strong> - Possono utilizzare i comandi con !, come !groups, e parlare quando la chat è moderata`,
-				`% <strong>Driver</strong> - Come i Voice, e possono mutare gli utenti`,
-				`@ <strong>Moderator</strong> - Come i Driver, e possono bannare gli utenti dalla room`,
-				`* <strong>Bot</strong> - Come i Moderator, ma il simbolo specifica che l'utente è un bot`,
-				`# <strong>Room Owner</strong> - Sono i leader della room e possono controllarla quasi del tutto`,
-			],
-			french: [
-				`<strong>Grades de room</strong>`,
-				`+ <strong>Voice</strong> - Ils peuvent utiliser les commandes contenant ! telles que !groups et parler pendant les chats restreints`,
-				`% <strong>Driver</strong> - Comme ci-dessus, en plus de pouvoir sanctionner via mute et warn`,
-				`@ <strong>Moderator</strong> - Comme ci-dessus, en plus de pouvoir bannir un utilisateur de la room`,
-				`* <strong>Bot</strong> - Comme les Moderator, à la différence que ces utilisateurs sont des bots`,
-				`# <strong>Room Owner</strong> - Ce sont les chefs/leaders de la room et ils peuvent les contrôler quasiment en totalité`,
-			],
-			simplifiedchinese: [
-				`<strong>房权限</strong>`,
-				`+ <strong>信任用户</strong> - 可以使用!广播指令，比如!groups，并可以在限制发言期间发言`,
-				`% <strong>见习管理</strong> - 同上，并可以禁止用户发言或警告用户`,
-				`@ <strong>管理员</strong> - 同上，并可以将用户从房间封禁`,
-				`* <strong>机器人</strong> - 跟管理员一样，只不过是机器`,
-				`# <strong>房主</strong> - 房中的领导，几乎拥有房间的全部管理权力`,
-			],
-			traditionalchinese: [
-				`<strong>房權限</strong>`,
-				`+ <strong>信任用戶</strong> - 可以使用!廣播指令，比如!groups，並可以在限制發言期間發言`,
-				`% <strong>見習管理</strong> - 同上，並可以禁止用戶發言或警告用戶`,
-				`@ <strong>管理員</strong> - 同上，並可以將用戶從房間封禁`,
-				`* <strong>機器人</strong> - 跟管理員一樣，隻不過是機器`,
-				`# <strong>房主</strong> - 房中的領導，幾乎擁有房間的全部管理權力`,
-			],
-			japanese: [
-				`<strong>日本語部屋のユーザーランク</strong>`,
-				`<strong>ボイス</strong>(+)：「!コマンド」を使ってコマンドの結果を部屋に表示することができる。`,
-				`<strong>ドライバー</strong>(%)：上記に加えて警告メッセージを出したりユーザーを短時間喋れなく（ミュート）することができる。`,
-				`<strong>モデレータ</strong>(@)：上記に加えてユーザーを部屋からBANすることができる。`,
-				`<strong>ボット</strong>(*)：権限はモデレータと同じだが、ボットだと分かるためのランク。`,
-				`<strong>ルームオーナー</strong>(#)：この部屋のリーダーでほとんどのことができる。`,
-			],
-			hindi: [
-				`<strong>रूम के पद</strong>`,
-				`+ <strong>Voice</strong> - ये लोग '!' commands का इस्तेमाल कर सकते हैं, जैसे की !groups`,
-				`% <strong>Driver</strong> - ये लोग ऊपर की चीज़ें और उसके अलावा mute और warn भी कर सकते हैं`,
-				`@ <strong>Moderator</strong> - ये लोग ऊपर की चीज़ें और उसके अलावा room ban भी कर सकते हैं`,
-				`* <strong>Bot</strong> - Moderator जैसा पर केवल Bots के लिए`,
-				`# <strong>Room Owner</strong> - ये लोग room के leader हैं और रूम लगभग पूरी तरह इनके अधीन है`,
-			],
-			dutch: [
-				`<strong>Roomrangen</strong>`,
-				`+ <strong>Voice</strong> - Ze kunnen ! commando's gebruiken en tijdens beperkte chat praten`,
-				`% <strong>Driver</strong> - Het bovenstaande en ze kunnen gebruikers muten en waarschuwen`,
-				`@ <strong>Moderator</strong> - Het bovenstaande en ze kunnen gebruikers uit de room bannen`,
-				`* <strong>Bot</strong> - Hetzelfde als een moderator maar dit symbool maakt duidelijk dat deze gebruiker een bot is`,
-				`# <strong>Room Owner</strong> - Zij zijn de leiders van de room en hebben bijna de gehele controle erover`,
-			],
-			german: [
-				`<strong>Raum-Ränge</strong>`,
-				`+ <strong>Voice</strong> - Sie können ! Befehle wie !groups benutzen, und während moderiertem Chat reden`,
-				`% <strong>Driver</strong> - Oben genanntes, und sie können verwarnen und muten`,
-				`@ <strong>Moderator</strong> - Oben genanntes, und sie können Nutzer aus dem Raum bannen`,
-				`* <strong>Bot</strong> - Wie Moderatoren, nur wird verdeutlicht, dass der Nutzer ein Bot ist`,
-				`# <strong>Room Owner</strong> - Sie sind die Leiter des Raumes und können beinahe vollständig über ihn bestimmen`,
-			],
-		};
-		const globalRanks = {
-			__proto__: null,
-			english: [
-				`<strong>Global ranks</strong>`,
-				`+ <strong>Global Voice</strong> - They can use ! commands like !groups`,
-				`% <strong>Global Driver</strong> - The above, and they can also lock users and check for alts`,
-				`@ <strong>Global Moderator</strong> - The above, and they can globally ban users`,
-				`* <strong>Global Bot</strong> - Like Moderator, but makes it clear that this user is a bot`,
-				`&amp; <strong>Global Leader</strong> - The above, and they can promote to global moderator and force ties`,
-				`~ <strong>Global Administrator</strong> -  They can do anything, like change what this message says`,
-			],
-			portuguese: [
-				`<strong>Cargos Globais</strong>`,
-				`+ <strong>Global Voice</strong> - Eles podem usar comandos com !, tal como !groups, e falar durante o chat moderado`,
-				`% <strong>Global Driver</strong> - O de acima, além de poderem dar locks e verificar contas alternativas`,
-				`@ <strong>Global Moderator</strong> - O de cima, e banir usuários do servidor`,
-				`* <strong>Global Bot</strong> - Igual ao cargo de Moderator, mas deixa claro que o usuário é um bot`,
-				`&amp; <strong>Global Leader</strong> - O de cima, e promover usuários a global moderator e forçar empates`,
-				`~ <strong>Global Administrator</strong> - Eles podem fazer qualquer coisa, como mudar o que esta mensagem diz`,
-			],
-			spanish: [
-				`<strong>Rangos Globales</strong>`,
-				`+ <strong>Global Voice</strong> - Pueden utilizar comandos con ! como !groups y hablar cuando haya modchat +`,
-				`% <strong>Global Driver</strong> - Lo mismo que arriba y también pueden dar locks y revisar las alts`,
-				`@ <strong>Global Moderator</strong> - Lo mismo que arriba y además pueden expulsar globalmente del servidor`,
-				`* <strong>Global Bot</strong> - Igual que un moderador, pero el símbolo identifica que es un Bot`,
-				`&amp; <strong>Global Leader</strong> - Lo mismo que arriba y también pueden promover a otros a moderador global y forzar empates`,
-				`~ <strong>Global Administrator</strong> - Pueden hacer cualquier cosa, como cambiar lo que dice este mensaje`,
-			],
-			italian: [
-				`<strong>Ruoli Globali</strong>`,
-				`+ <strong>Global Voice</strong> - Possono utilizzare i comandi con !, come !groups, e parlare quando la chat è moderata`,
-				`% <strong>Global Driver</strong> - Come i Global Voice, e possono lockare gli utenti e controllare i loro alts`,
-				`@ <strong>Global Moderator</strong> - Come i Global Driver, e possono bannare globalmente gli utenti`,
-				`* <strong>Global Bot</strong> - Come i Global Moderator, ma il simbolo specifica che l'utente è un bot`,
-				`&amp; <strong>Global Leader</strong> - Come i Global Moderator, e possono promuovere gli utenti a moderatori globali e forzare i pareggi nelle battaglie`,
-				`~ <strong>Global Administrator</strong> - Possono fare di tutto, anche cambiare il contenuto di questo messaggio`,
-			],
-			french: [
-				`<strong>Grades globaux</strong>`,
-				`+ <strong>Global Voice</strong> - Ils peuvent utiliser les commandes contenant ! telles que !groups et parler pendant les chats restreints`,
-				`% <strong>Global Driver</strong> - Comme ci-dessus, en plus de pouvoir lock certains utilisateurs et vérifier leurs éventuels autres comptes`,
-				`@ <strong>Global Moderator</strong> - Comme ci-dessus, en plus de pouvoir bannir des utilisateurs du site`,
-				`* <strong>Global Bot</strong> - Comme les Moderator, à la différence que ces utilisateurs sont des bots`,
-				`&amp; <strong>Global Leader</strong> - Comme les précédents, en plus de pouvoir attribuer des promotions au rang de Global Moderator et de forcer les matchs nuls`,
-				`~ <strong>Global Administrator</strong> - Ils peuvent tout faire, comme changer ce que ce message affiche`,
-			],
-			simplifiedchinese: [
-				`<strong>全服权限</strong>`,
-				`+ <strong>全服信任用户</strong> -可以使用!广播指令，比如!groups，并可以在限制发言期间发言`,
-				`% <strong>全服见习管理</strong> - 同上，并可以锁定用户或查看他们的小号`,
-				`@ <strong>全服管理员</strong> - 同上，并可以将用户从服务器封禁`,
-				`* <strong>全服机器人</strong> - 跟全服管理员一样，只不过是机器`,
-				`&amp; <strong>全服领袖</strong> - 同上，并可以提拔用户至全服管理员、强制对战平局`,
-				`~ <strong>全服总管</strong> - 可以在服务器做任何事，例如修改你现在看到的这条信息`,
-			],
-			traditionalchinese: [
-				`<strong>全服權限</strong>`,
-				`+ <strong>全服信任用戶</strong> -可以使用!廣播指令，比如!groups，並可以在限制發言期間發言`,
-				`% <strong>全服見習管理</strong> - 同上，並可以鎖定用戶或查看他們的小號`,
-				`@ <strong>全服管理員</strong> - 同上，並可以將用戶從服務器封禁`,
-				`* <strong>全服機器人</strong> - 跟全服管理員一樣，隻不過是機器`,
-				`&amp; <strong>全服領袖</strong> - 同上，並可以提拔用戶至全服管理員、強制對戰平局`,
-				`~ <strong>全服總管</strong> - 可以在服務器做任何事，例如修改你現在看到的這條信息`,
-			],
-			japanese: [
-				`<strong>グローバルユーザーランク</strong>`,
-				`<strong>グローバルボイス</strong>(+)：「!コマンド」を使ってコマンドの結果を部屋に表示することができる。`,
-				`<strong>グローバルドライバー</strong>(%)：上記に加えてユーザーをロックしたり、他に使っているアカウントを確認することができる。`,
-				`<strong>グローバルモデレータ</strong>(@)：上記に加えてユーザーをサイト全体からBANできる。`,
-				`<strong>グローバルボット</strong>(*)：権限はモデレータと同じだが、ボットだと分かるためのランク。`,
-				`<strong>グローバルリーダー</strong>(&amp;)：上記に加えてユーザーをグローバルモデレータまで昇格したり、試合を強制的に引き分けにすることができる。`,
-				`<strong>グローバルアドミニストレーター</strong>(~)：何でもできる。この文章も編集できる。`,
-			],
-			hindi: [
-				`<strong>वैश्विक पद</strong>`,
-				`+ <strong>वैश्विक Voice</strong> - ये लोग '!' commands का इस्तेमाल कर सकते हैं, जैसे की !groups`,
-				`% <strong>वैश्विक Driver</strong> - ये लोग ऊपर की चीज़ें और उसके अलावा lock या alt भी जाँच सकते हैं`,
-				`@ <strong>वैश्विक Moderator</strong> - ये लोग ऊपर की चीज़ें और उसके अलावा वैश्विक स्तर पे ban भी कर सकते हैं`,
-				`* <strong>वैश्विक Bot</strong> - Moderator जैसा पर केवल Bots के लिए`,
-				`&amp; <strong>वैश्विक Leader</strong> - ये लोग ऊपर की चीज़ें और उसके अलावा वैश्विक Moderator तक नियुक्त और खेल रद्द कर सकते हैं`,
-				`~ <strong>वैश्विक Administrator</strong> - ये लोग कुछ भी कर सकते हैं, जैसे की इस सन्देश को बदलना`,
-			],
-			dutch: [
-				`<strong>Globale rangen</strong>`,
-				`+ <strong>Global Voice</strong> - Ze kunnen ! commando's gebruiken en tijdens beperkte chat praten`,
-				`% <strong>Global Driver</strong> - Het bovenstaande en ze kunnen gebruikers locken en alternatieve accounts inzien`,
-				`@ <strong>Global Moderator</strong> - Het bovenstaande en ze kunnen gebruikers van de server bannen`,
-				`* <strong>Global Bot</strong> - Hetzelfde als een moderator maar dit symbool maakt duidelijk dat deze gebruiker een bot is`,
-				`&amp; <strong>Global Leader</strong> - Het bovenstaande en ze kunnen gebruikers promoten tot global moderator en gelijkspel afdwingen`,
-				`~ <strong>Global Administrator</strong> - Zij kunnen alles doen, zoals veranderen wat hier staat`,
-			],
-			german: [
-				`<strong>Globale Ränge</strong>`,
-				`+ <strong>Global Voice</strong> - Sie können ! Befehle wie !groups benutzen, und während moderiertem Chat reden`,
-				`% <strong>Global Driver</strong> - Oben genanntes, und sie können Nutzer locken und alternative Accounts einsehen`,
-				`@ <strong>Global Moderator</strong> - Oben genanntes, und sie können Nutzer vom Server bannen`,
-				`* <strong>Global Bot</strong> - Wie Moderatoren, nur wird verdeutlicht, dass der Nutzer ein Bot ist`,
-				`&amp; <strong>Global Leader</strong> - Oben genanntes, und sie können bis zu Global Moderator befördern und in Kämpfen ein Unentschieden erzwingen`,
-				`~ <strong>Global Administrator</strong> - Sie können alles tun, zum Beispiel den Text dieser Nachricht ändern`,
-			],
-		};
-		let language = room && room.language ? room.language : 'english';
-		if (!(language in roomRanks)) language = 'english'; // Unsupported for this command
+
+		const roomRanks = [
+			`<strong>Room ranks</strong>`,
+			`+ <strong>Voice</strong> - They can use ! commands like !groups`,
+			`% <strong>Driver</strong> - The above, and they can mute and warn`,
+			`@ <strong>Moderator</strong> - The above, and they can room ban users`,
+			`* <strong>Bot</strong> - Like Moderator, but makes it clear that this user is a bot`,
+			`# <strong>Room Owner</strong> - They are leaders of the room and can almost totally control it`,
+		];
+
+		const globalRanks = [
+			`<strong>Global ranks</strong>`,
+			`+ <strong>Global Voice</strong> - They can use ! commands like !groups`,
+			`% <strong>Global Driver</strong> - The above, and they can also lock users and check for alts`,
+			`@ <strong>Global Moderator</strong> - The above, and they can globally ban users`,
+			`* <strong>Global Bot</strong> - Like Moderator, but makes it clear that this user is a bot`,
+			`&amp; <strong>Global Leader</strong> - The above, and they can promote to global moderator and force ties`,
+			`~ <strong>Global Administrator</strong> -  They can do anything, like change what this message says`,
+		];
+
 		this.sendReplyBox(
-			(showRoom ? roomRanks[language].join('<br />') : ``) +
+			(showRoom ? roomRanks.map(str => this.tr(str)).join('<br />') : ``) +
 			(showRoom && showGlobal ? `<br /><br />` : ``) +
-			(showGlobal ? globalRanks[language].join('<br />') : ``)
+			(showGlobal ? globalRanks.map(str => this.tr(str)).join('<br />') : ``)
 		);
 	},
 	groupshelp: [
 		`/groups - Explains what the symbols (like % and @) before people's names mean.`,
 		`/groups [global|room] - Explains only global or room symbols.`,
-		`!groups - Shows everyone that information. Requires: + % @ * # & ~`,
+		`!groups - Shows everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!punishments': true,
-	punishments: function (target, room, user) {
+	punishments(target, room, user) {
 		if (!this.runBroadcast()) return;
+		const showRoom = (target !== 'global');
+		const showGlobal = (target !== 'room' && target !== 'rooms');
+
+		const roomPunishments = [
+			`<strong>Room punishments</strong>:`,
+			`<strong>warn</strong> - Displays a popup with the rules.`,
+			`<strong>mute</strong> - Mutes a user (makes them unable to talk) for 7 minutes.`,
+			`<strong>hourmute</strong> - Mutes a user for 60 minutes.`,
+			`<strong>ban</strong> - Bans a user (makes them unable to join the room) for 2 days.`,
+			`<strong>blacklist</strong> - Bans a user for a year.`,
+		];
+
+		const globalPunishments = [
+			`<strong>Global punishments</strong>:`,
+			`<strong>lock</strong> - Locks a user (makes them unable to talk in any rooms or PM non-staff) for 2 days.`,
+			`<strong>weeklock</strong> - Locks a user for a week.`,
+			`<strong>namelock</strong> - Locks a user and prevents them from having a username for 2 days.`,
+			`<strong>globalban</strong> - Globally bans (makes them unable to connect and play games) for a week.`,
+		];
+
 		this.sendReplyBox(
-			`<strong>Room punishments</strong>:<br />` +
-			`<strong>warn</strong> - Displays a popup with the rules.<br />` +
-			`<strong>mute</strong> - Mutes a user (makes them unable to talk) for 7 minutes.<br />` +
-			`<strong>hourmute</strong> - Mutes a user for 60 minutes.<br />` +
-			`<strong>ban</strong> - Bans a user (makes them unable to join the room) for 2 days.<br />` +
-			`<strong>blacklist</strong> - Bans a user for a year.<br />` +
-			`<br />` +
-			`<strong>Global punishments</strong>:<br />` +
-			`<strong>lock</strong> - Locks a user (makes them unable to talk in any rooms or PM non-staff) for 2 days.<br />` +
-			`<strong>weeklock</strong> - Locks a user for a week.<br />` +
-			`<strong>namelock</strong> - Locks a user and prevents them from having a username for 2 days.<br />` +
-			`<strong>globalban</strong> - Globally bans (makes them unable to connect and play games) for a week.`
+			(showRoom ? roomPunishments.map(str => this.tr(str)).join('<br />') : ``) +
+			(showRoom && showGlobal ? `<br /><br />` : ``) +
+			(showGlobal ? globalPunishments.map(str => this.tr(str)).join('<br />') : ``)
 		);
 	},
 	punishmentshelp: [
 		`/punishments - Explains punishments.`,
-		`!punishments - Show everyone that information. Requires: + % @ * # & ~`,
+		`!punishments - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!opensource': true,
 	repo: 'opensource',
 	repository: 'opensource',
 	git: 'opensource',
-	opensource: function (target, room, user) {
+	opensource(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			`Pok&eacute;mon Showdown is open source:<br />` +
@@ -1551,42 +1444,42 @@ const commands = {
 	},
 	opensourcehelp: [
 		`/opensource - Links to PS's source code repository.`,
-		`!opensource - Show everyone that information. Requires: + % @ * # & ~`,
+		`!opensource - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!staff': true,
-	staff: function (target, room, user) {
+	staff(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`<a href="https://www.smogon.com/sim/staff_list">Pok&eacute;mon Showdown Staff List</a>`);
 	},
 
 	'!forums': true,
-	forums: function (target, room, user) {
+	forums(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`<a href="https://www.smogon.com/forums/forums/209/">Pok&eacute;mon Showdown Forums</a>`);
 	},
 
 	'!privacypolicy': true,
-	privacypolicy: function (target, room, user) {
+	privacypolicy(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			`- We log PMs so you can report them - staff can't look at them without permission unless there's a law enforcement reason.<br />` +
 			`- We log IPs to enforce bans and mutes.<br />` +
 			`- We use cookies to save your login info and teams, and for Google Analytics and AdSense.<br />` +
-			`- For more information, you can read our <a href="https://pokemonshowdown.com/privacy">full privacy policy.</a>`
+			`- For more information, you can read our <a href="https://${Config.routes.root}/privacy">full privacy policy.</a>`
 		);
 	},
 
 	'!suggestions': true,
-	suggestions: function (target, room, user) {
+	suggestions(target, room, user) {
 		if (!this.runBroadcast()) return;
-		this.sendReplyBox(`<a href="https://www.smogon.com/forums/threads/3534365/">Make a suggestion for Pok&eacute;mon Showdown</a>`);
+		this.sendReplyBox(`<a href="https://www.smogon.com/forums/forums/517/">Make a suggestion for Pok&eacute;mon Showdown</a>`);
 	},
 
 	'!bugs': true,
 	bugreport: 'bugs',
 	bugreports: 'bugs',
-	bugs: function (target, room, user) {
+	bugs(target, room, user) {
 		if (!this.runBroadcast()) return;
 		if (room && room.battle) {
 			this.sendReplyBox(`<center><button name="saveReplay"><i class="fa fa-upload"></i> Save Replay</button> &mdash; <a href="https://www.smogon.com/forums/threads/3520646/">Questions</a> &mdash; <a href="https://www.smogon.com/forums/threads/3634749/">Bug Reports</a></center>`);
@@ -1600,50 +1493,51 @@ const commands = {
 	},
 
 	'!avatars': true,
-	avatars: function (target, room, user) {
+	avatars(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`You can <button name="avatars">change your avatar</button> by clicking on it in the <button name="openOptions"><i class="fa fa-cog"></i> Options</button> menu in the upper right. Custom avatars are only obtainable by staff.`);
 	},
 	avatarshelp: [
 		`/avatars - Explains how to change avatars.`,
-		`!avatars - Show everyone that information. Requires: + % @ * # & ~`,
+		`!avatars - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!optionsbutton': true,
 	optionbutton: 'optionsbutton',
-	optionsbutton: function (target, room, user) {
+	optionsbutton(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`<button name="openOptions" class="button"><i style="font-size: 16px; vertical-align: -1px" class="fa fa-cog"></i> Options</button> (The Sound and Options buttons are at the top right, next to your username)`);
 	},
 	'!soundbutton': true,
 	soundsbutton: 'soundbutton',
 	volumebutton: 'soundbutton',
-	soundbutton: function (target, room, user) {
+	soundbutton(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`<button name="openSounds" class="button"><i style="font-size: 16px; vertical-align: -1px" class="fa fa-volume-up"></i> Sound</button> (The Sound and Options buttons are at the top right, next to your username)`);
 	},
 
 	'!intro': true,
 	introduction: 'intro',
-	intro: function (target, room, user) {
+	intro(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			`New to competitive Pok&eacute;mon?<br />` +
 			`- <a href="https://www.smogon.com/forums/threads/3496279/">Beginner's Guide to Pok&eacute;mon Showdown</a><br />` +
 			`- <a href="https://www.smogon.com/dp/articles/intro_comp_pokemon">An introduction to competitive Pok&eacute;mon</a><br />` +
-			`- <a href="https://www.smogon.com/bw/articles/bw_tiers">What do 'OU', 'UU', etc mean?</a><br />` +
-			`- <a href="https://www.smogon.com/xyhub/tiers">What are the rules for each format? What is 'Sleep Clause'?</a>`
+			`- <a href="https://www.smogon.com/sm/articles/sm_tiers">What do 'OU', 'UU', etc mean?</a><br />` +
+			`- <a href="https://www.smogon.com/dex/sm/formats/">What are the rules for each format?</a><br />` +
+			`- <a href="https://www.smogon.com/sm/articles/clauses">What is 'Sleep Clause' and other clauses?</a>`
 		);
 	},
 	introhelp: [
 		`/intro - Provides an introduction to competitive Pok\u00e9mon.`,
-		`!intro - Show everyone that information. Requires: + % @ * # & ~`,
+		`!intro - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!smogintro': true,
 	mentoring: 'smogintro',
 	smogonintro: 'smogintro',
-	smogintro: function (target, room, user) {
+	smogintro(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			`Welcome to Smogon's official simulator! The <a href="https://www.smogon.com/forums/forums/264">Smogon Info / Intro Hub</a> can help you get integrated into the community.<br />` +
@@ -1653,24 +1547,53 @@ const commands = {
 	},
 
 	'!calc': true,
+	bsscalc: 'calc',
 	calculator: 'calc',
+	cantsaycalc: 'calc',
 	damagecalculator: 'calc',
 	damagecalc: 'calc',
-	calc: function (target, room, user) {
+	honkalculator: 'calc',
+	honkocalc: 'calc',
+	randomscalc: 'calc',
+	randbatscalc: 'calc',
+	rcalc: 'calc',
+	calc(target, room, user, connection, cmd) {
+		if (cmd === 'calc' && target) return this.parse(`/math ${target}`);
 		if (!this.runBroadcast()) return;
+		const DEFAULT_CALC_COMMANDS = ['honkalculator', 'honkocalc'];
+		const RANDOMS_CALC_COMMANDS = ['randomscalc', 'randbatscalc', 'rcalc'];
+		const BATTLESPOT_CALC_COMMANDS = ['bsscalc', 'cantsaycalc'];
+		const SUPPORTED_RANDOM_FORMATS = ['gen7randombattle', 'gen7unratedrandombattle'];
+		const SUPPORTED_BATTLESPOT_FORMATS = ['gen5gbusingles', 'gen5gbudoubles', 'gen6battlespotsingles', 'gen6battlespotdoubles', 'gen6battlespottriples', 'gen7battlespotsingles', 'gen7battlespotdoubles', 'gen7bssfactory'];
+		const isRandomBattle = (room && room.battle && SUPPORTED_RANDOM_FORMATS.includes(room.battle.format));
+		const isBattleSpotBattle = (room && room.battle && (SUPPORTED_BATTLESPOT_FORMATS.includes(room.battle.format) || room.battle.format.includes("battlespotspecial")));
+		if (RANDOMS_CALC_COMMANDS.includes(cmd) || (isRandomBattle && !DEFAULT_CALC_COMMANDS.includes(cmd) && !BATTLESPOT_CALC_COMMANDS.includes(cmd))) {
+			return this.sendReplyBox(
+				`Random Battles damage calculator. (Courtesy of LegoFigure11 &amp; Wiggleetuff)<br />` +
+				`- <a href="https://randbatscalc.github.io/">Random Battles Damage Calculator</a>`
+			);
+		}
+		if (BATTLESPOT_CALC_COMMANDS.includes(cmd) || (isBattleSpotBattle && !DEFAULT_CALC_COMMANDS.includes(cmd))) {
+			return this.sendReplyBox(
+				`Battle Spot damage calculator. (Courtesy of cant say &amp; LegoFigure11)<br />` +
+				`- <a href="https://cantsay.github.io/">Battle Spot Damage Calculator</a>`
+			);
+		}
 		this.sendReplyBox(
-			`Pok&eacute;mon Showdown! damage calculator. (Courtesy of Honko)<br />` +
-			`- <a href="https://pokemonshowdown.com/damagecalc/">Damage Calculator</a>`
+			`Pok&eacute;mon Showdown! damage calculator. (Courtesy of Honko &amp; Austin)<br />` +
+			`- <a href="https://${Config.routes.root}/damagecalc/">Damage Calculator</a>`
 		);
 	},
 	calchelp: [
 		`/calc - Provides a link to a damage calculator`,
-		`!calc - Shows everyone a link to a damage calculator. Requires: + % @ * # & ~`,
+		`/rcalc - Provides a link to the random battles damage calculator`,
+		`/bsscalc - Provides a link to the Battle Spot damage calculator`,
+		`!calc - Shows everyone a link to a damage calculator. Requires: + % @ # & ~`,
 	],
 
 	'!cap': true,
 	capintro: 'cap',
-	cap: function (target, room, user) {
+	cap(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			`An introduction to the Create-A-Pok&eacute;mon project:<br />` +
@@ -1682,11 +1605,11 @@ const commands = {
 	},
 	caphelp: [
 		`/cap - Provides an introduction to the Create-A-Pok\u00e9mon project.`,
-		`!cap - Show everyone that information. Requires: + % @ * # & ~`,
+		`!cap - Show everyone that information. Requires: + % @ # & ~`,
 	],
 
 	'!gennext': true,
-	gennext: function (target, room, user) {
+	gennext(target, room, user) {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
 			"NEXT (also called Gen-NEXT) is a mod that makes changes to the game:<br />" +
@@ -1705,7 +1628,7 @@ const commands = {
 	tiershelp: 'formathelp',
 	formatshelp: 'formathelp',
 	viewbanlist: 'formathelp',
-	formathelp: function (target, room, user, connection, cmd) {
+	formathelp(target, room, user, connection, cmd) {
 		if (!this.runBroadcast()) return;
 		if (!target) {
 			return this.sendReplyBox(
@@ -1718,7 +1641,7 @@ const commands = {
 
 		const isOMSearch = (cmd === 'om' || cmd === 'othermetas');
 
-		let targetId = toId(target);
+		let targetId = toID(target);
 		if (targetId === 'ladder') targetId = 'search';
 		if (targetId === 'all') targetId = '';
 
@@ -1735,7 +1658,7 @@ const commands = {
 		let totalMatches = 0;
 		for (const mode of formatList) {
 			let format = Dex.getFormat(mode);
-			let sectionId = toId(format.section);
+			let sectionId = toID(format.section);
 			let formatId = format.id;
 			if (!/^gen\d+/.test(targetId)) formatId = formatId.replace(/^gen\d+/, ''); // skip generation prefix if it wasn't provided
 			if (targetId && !format[targetId + 'Show'] && sectionId !== targetId && format.id === mode && !formatId.startsWith(targetId)) continue;
@@ -1808,56 +1731,68 @@ const commands = {
 	},
 
 	'!roomhelp': true,
-	roomhelp: function (target, room, user) {
+	roomhelp(target, room, user) {
 		if (!this.canBroadcast(false, '!htmlbox')) return;
 		if (this.broadcastMessage && !this.can('declare', null, room)) return false;
 
 		if (!this.runBroadcast(false, '!htmlbox')) return;
+
+		const strings = [
+			[
+				`<strong>Room drivers (%)</strong> can use:`,
+				`- /warn OR /k <em>username</em>: warn a user and show the Pok&eacute;mon Showdown rules`,
+				`- /mute OR /m <em>username</em>: 7 minute mute`,
+				`- /hourmute OR /hm <em>username</em>: 60 minute mute`,
+				`- /unmute <em>username</em>: unmute`,
+				`- /hidetext <em>username</em>: hide a user's messages from the room`,
+				`- /announce OR /wall <em>message</em>: make an announcement`,
+				`- /modlog <em>username</em>: search the moderator log of the room`,
+				`- /modnote <em>note</em>: add a moderator note that can be read through modlog`,
+			],
+			[
+				`<strong>Room moderators (@)</strong> can also use:`,
+				`- /roomban OR /rb <em>username</em>: ban user from the room`,
+				`- /roomunban <em>username</em>: unban user from the room`,
+				`- /roomvoice <em>username</em>: appoint a room voice`,
+				`- /roomdevoice <em>username</em>: remove a room voice`,
+				`- /staffintro <em>intro</em>: set the staff introduction that will be displayed for all staff joining the room`,
+				`- /roomsettings: change a variety of room settings, namely modchat`,
+			],
+			[
+				`<strong>Room owners (#)</strong> can also use:`,
+				`- /roomintro <em>intro</em>: set the room introduction that will be displayed for all users joining the room`,
+				`- /rules <em>rules link</em>: set the room rules link seen when using /rules`,
+				`- /roommod, /roomdriver <em>username</em>: appoint a room moderator/driver`,
+				`- /roomdemod, /roomdedriver <em>username</em>: remove a room moderator/driver`,
+				`- /roomdeauth <em>username</em>: remove all room auth from a user`,
+				`- /declare <em>message</em>: make a large blue declaration to the room`,
+				`- !htmlbox <em>HTML code</em>: broadcast a box of HTML code to the room`,
+				`- !showimage <em>[url], [width], [height]</em>: show an image to the room`,
+				`- /roomsettings: change a variety of room settings, including modchat, capsfilter, etc`,
+			],
+			[
+				`More detailed help can be found in the <a href="https://www.smogon.com/forums/posts/6774654/">roomauth guide</a>`,
+			],
+			[
+				`Tournament Help:`,
+				`- /tour create <em>format</em>, elimination: create a new single elimination tournament in the current room.`,
+				`- /tour create <em>format</em>, roundrobin: create a new round robin tournament in the current room.`,
+				`- /tour end: forcibly end the tournament in the current room`,
+				`- /tour start: start the tournament in the current room`,
+				`- /tour banlist [pokemon], [talent], [...]: ban moves, abilities, Pokémon or items from being used in a tournament (it must be created first)`,
+			],
+			[
+				`More detailed help can be found in the <a href="https://www.smogon.com/forums/posts/6777489/">tournaments guide</a>`,
+			],
+		];
+
 		this.sendReplyBox(
-			`<strong>Room drivers (%)</strong> can use:<br />` +
-			`- /warn OR /k <em>username</em>: warn a user and show the Pok&eacute;mon Showdown rules<br />` +
-			`- /mute OR /m <em>username</em>: 7 minute mute<br />` +
-			`- /hourmute OR /hm <em>username</em>: 60 minute mute<br />` +
-			`- /unmute <em>username</em>: unmute<br />` +
-			`- /announce OR /wall <em>message</em>: make an announcement<br />` +
-			`- /modlog <em>username</em>: search the moderator log of the room<br />` +
-			`- /modnote <em>note</em>: add a moderator note that can be read through modlog<br />` +
-			`<br />` +
-			`<strong>Room moderators (@)</strong> can also use:<br />` +
-			`- /roomban OR /rb <em>username</em>: ban user from the room<br />` +
-			`- /roomunban <em>username</em>: unban user from the room<br />` +
-			`- /roomvoice <em>username</em>: appoint a room voice<br />` +
-			`- /roomdevoice <em>username</em>: remove a room voice<br />` +
-			`- /staffintro <em>intro</em>: set the staff introduction that will be displayed for all staff joining the room<br />` +
-			`- /roomsettings: change a variety of room settings, namely modchat<br />` +
-			`<br />` +
-			`<strong>Room owners (#)</strong> can also use:<br />` +
-			`- /roomintro <em>intro</em>: set the room introduction that will be displayed for all users joining the room<br />` +
-			`- /rules <em>rules link</em>: set the room rules link seen when using /rules<br />` +
-			`- /roommod, /roomdriver <em>username</em>: appoint a room moderator/driver<br />` +
-			`- /roomdemod, /roomdedriver <em>username</em>: remove a room moderator/driver<br />` +
-			`- /roomdeauth <em>username</em>: remove all room auth from a user<br />` +
-			`- /declare <em>message</em>: make a large blue declaration to the room<br />` +
-			`- !htmlbox <em>HTML code</em>: broadcast a box of HTML code to the room<br />` +
-			`- !showimage <em>[url], [width], [height]</em>: show an image to the room<br />` +
-			`- /roomsettings: change a variety of room settings, including modchat, capsfilter, etc<br />` +
-			`<br />` +
-			`More detailed help can be found in the <a href="https://www.smogon.com/forums/posts/6774654/">roomauth guide</a><br />` +
-			`<br />` +
-			`Tournament Help:<br />` +
-			`- /tour create <em>format</em>, elimination: create a new single elimination tournament in the current room.<br />` +
-			`- /tour create <em>format</em>, roundrobin: create a new round robin tournament in the current room.<br />` +
-			`- /tour end: forcibly end the tournament in the current room<br />` +
-			`- /tour start: start the tournament in the current room<br />` +
-			`- /tour banlist [pokemon], [talent], [...]: ban moves, abilities, Pokémon or items from being used in a tournament (it must be created first)<br />` +
-			`<br />` +
-			`More detailed help can be found in the <a href="https://www.smogon.com/forums/posts/6777489/">tournaments guide</a><br />` +
-			`</div>`
+			strings.map(par => par.map(string => this.tr(string)).join('<br />')).join('<br /><br />')
 		);
 	},
 
 	'!restarthelp': true,
-	restarthelp: function (target, room, user) {
+	restarthelp(target, room, user) {
 		if (!Rooms.global.lockdown && !this.can('lockdown')) return false;
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(
@@ -1870,15 +1805,15 @@ const commands = {
 	},
 
 	'!processes': true,
-	processes: function (target, room, user) {
+	processes(target, room, user) {
 		if (!this.can('lockdown')) return false;
 
 		let buf = `<strong>${process.pid}</strong> - Main<br />`;
 		for (const worker of Sockets.workers.values()) {
 			buf += `<strong>${worker.pid || worker.process.pid}</strong> - Sockets ${worker.id}<br />`;
 		}
-
-		const processManagers = require('../lib/process-manager').processManagers;
+		/** @type {typeof import('../../lib/process-manager').processManagers} */
+		const processManagers = require(/** @type {any} */('../../.lib-dist/process-manager')).processManagers;
 		for (const manager of processManagers) {
 			for (const [i, process] of manager.processes.entries()) {
 				buf += `<strong>${process.process.pid}</strong> - ${manager.basename} ${i} (load ${process.load})<br />`;
@@ -1893,29 +1828,13 @@ const commands = {
 
 	'!rules': true,
 	rule: 'rules',
-	rules: function (target, room, user) {
+	rules(target, room, user) {
 		if (!target) {
-			const languageTable = {
-				portuguese: ['Por favor siga as regras:', 'pages/rules-pt', 'Regras Globais', room ? `Regras da sala ${room.title}` : ``],
-				spanish: ['Por favor sigue las reglas:', 'pages/rules-es', 'Reglas Globales', room ? `Reglas de la sala ${room.title}` : ``],
-				italian: ['Per favore, rispetta le seguenti regole:', 'pages/rules-it', 'Regole Globali', room ? `Regole della room ${room.title}` : ``],
-				french: ['Veuillez suivre ces règles:', 'pages/rules-fr', 'Règles Générales', room ? `Règles de la room ${room.title}` : ``],
-				simplifiedchinese: ['请遵守规则:', 'pages/rules-zh', '全站规则', room ? `${room.title}房间规则` : ``],
-				traditionalchinese: ['請遵守規則:', 'pages/rules-tw', '全站規則', room ? `${room.title}房間規則` : ``],
-				japanese: ['ルールを守ってください:', 'pages/rules-ja', '全部屋共通ルール', room ? `${room.title}部屋のルール` : ``],
-				hindi: ['कृपया इन नियमों का पालन करें:', 'pages/rules-hi', 'सामान्य नियम', room ? `${room.title} Room के नियम` : ``],
-				turkish: ['Lütfen kurallara uyun:', 'pages/rules-tr', 'Genel kurallar', room ? `${room.title} odası kuralları` : ``],
-				dutch: ['Volg de regels:', 'pages/rules-nl', 'Globale Regels ', room ? `Regels van de ${room.title} room` : ``],
-				german: ['Bitte befolgt die Regeln:', 'pages/rules-de', 'Globale Regeln', room ? `Regeln des ${room.title} Raumes` : ``],
-				english: ['Please follow the rules:', 'rules', 'Global Rules', room ? `${room.title} room rules` : ``],
-			};
 			if (!this.runBroadcast()) return;
-			const globalRulesLink = `https://pokemonshowdown.com/${languageTable[room && room.language ? room.language : 'english'][1]}`;
-			const globalRulesLinkText = languageTable[room && room.language ? room.language : 'english'][2];
 			this.sendReplyBox(
-				`${room ? languageTable[room.language || 'english'][0] + '<br />' : ``}` +
-				(room && room.rulesLink ? Chat.html`- <a href="${room.rulesLink}">${languageTable[room.language || 'english'][3]}</a><br />` : ``) +
-				`- <a href="${globalRulesLink}">${globalRulesLinkText}</a>`
+				`${room ? this.tr("Please follow the rules:") + '<br />' : ``}` +
+				(room && room.rulesLink ? Chat.html`- <a href="${room.rulesLink}">${this.tr `${room.title} room rules`}</a><br />` : ``) +
+				`- <a href="https://${Config.routes.root}${this.tr('/rules')}">${this.tr("Global Rules")}</a>`
 			);
 			return;
 		}
@@ -1947,15 +1866,15 @@ const commands = {
 	},
 	ruleshelp: [
 		`/rules - Show links to room rules and global rules.`,
-		`!rules - Show everyone links to room rules and global rules. Requires: + % @ * # & ~`,
+		`!rules - Show everyone links to room rules and global rules. Requires: + % @ # & ~`,
 		`/rules [url] - Change the room rules URL. Requires: # & ~`,
 		`/rules remove - Removes a room rules URL. Requires: # & ~`,
 	],
 
 	'!faq': true,
-	faq: function (target, room, user) {
+	faq(target, room, user) {
 		if (!this.runBroadcast()) return;
-		target = target.toLowerCase();
+		target = target.toLowerCase().trim();
 		let showAll = target === 'all';
 		if (showAll && this.broadcasting) {
 			return this.sendReplyBox("You cannot broadcast all FAQs at once.");
@@ -1972,13 +1891,16 @@ const commands = {
 			buffer.push(`<a href="https://www.smogon.com/forums/threads/3508013/">What is COIL?</a>`);
 		}
 		if (showAll || target === 'ladder' || target === 'ladderhelp' || target === 'decay') {
-			buffer.push(`<a href="https://pokemonshowdown.com/pages/ladderhelp">How the ladder works</a>`);
+			buffer.push(`<a href="https://${Config.routes.root}/pages/ladderhelp">How the ladder works</a>`);
 		}
 		if (showAll || target === 'tiering' || target === 'tiers' || target === 'tier') {
 			buffer.push(`<a href="https://www.smogon.com/ingame/battle/tiering-faq">Tiering FAQ</a>`);
 		}
 		if (showAll || target === 'badge' || target === 'badges') {
 			buffer.push(`<a href="https://www.smogon.com/badge_faq">Badge FAQ</a>`);
+		}
+		if (showAll || target === 'rng') {
+			buffer.push(`<a href="https://${Config.routes.root}/pages/rng">How Pokémon Showdown's RNG works</a>`);
 		}
 		if (showAll || !buffer.length) {
 			buffer.unshift(`<a href="https://www.smogon.com/forums/posts/6774128/">Frequently Asked Questions</a>`);
@@ -1987,13 +1909,13 @@ const commands = {
 	},
 	faqhelp: [
 		`/faq [theme] - Provides a link to the FAQ. Add autoconfirmed, badges, coil, ladder, staff, or tiers for a link to these questions. Add all for all of them.`,
-		`!faq [theme] - Shows everyone a link to the FAQ. Add autoconfirmed, badges, coil, ladder, staff, or tiers for a link to these questions. Add all for all of them. Requires: + % @ * # & ~`,
+		`!faq [theme] - Shows everyone a link to the FAQ. Add autoconfirmed, badges, coil, ladder, staff, or tiers for a link to these questions. Add all for all of them. Requires: + % @ # & ~`,
 	],
 
 	'!smogdex': true,
 	analysis: 'smogdex',
 	strategy: 'smogdex',
-	smogdex: function (target, room, user) {
+	smogdex(target, room, user) {
 		if (!target) return this.parse('/help smogdex');
 		if (!this.runBroadcast()) return;
 
@@ -2047,7 +1969,7 @@ const commands = {
 			let formatId = extraFormat.id;
 			if (formatName.startsWith('[Gen ')) {
 				formatName = formatName.replace('[Gen ' + formatName[formatName.indexOf('[') + 5] + '] ', '');
-				formatId = toId(formatName);
+				formatId = toID(formatName);
 			}
 			if (formatId === 'battlespotdoubles') {
 				formatId = 'battle_spot_doubles';
@@ -2073,23 +1995,21 @@ const commands = {
 			const supportedLanguages = {
 				spanish: 'es',
 				french: 'fr',
-				italian: 'ita',
-				german: 'ger',
-				portuguese: 'por',
+				italian: 'it',
+				german: 'de',
+				portuguese: 'pt',
 			};
 			let speciesid = pokemon.speciesid;
 			// Special case for Meowstic-M
 			if (speciesid === 'meowstic') speciesid = 'meowsticm';
-			if (formatId === 'ou' && generation === 'sm' && room && room.language in supportedLanguages) {
+			if (['ou', 'uu'].includes(formatId) && generation === 'sm' && room && room.language in supportedLanguages) {
 				// Limited support for translated analysis
 				// Translated analysis do not support automatic redirects from a speciesid to the proper page
-				let pageid = pokemon.name.toLowerCase().replace(' ', '_');
-				this.sendReplyBox(`<a href="https://www.smogon.com/translations/${supportedLanguages[room.language]}/analyses/ou/${pageid}">${generation.toUpperCase()} ${Chat.escapeHTML(formatName)} ${pokemon.name} analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a>`);
-			} else if (formatId === 'ou' && generation === 'sm') {
-				let pageid = pokemon.name.toLowerCase().replace(' ', '_');
-				this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/ou">${generation.toUpperCase()} ${Chat.escapeHTML(formatName)} ${pokemon.name} analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a><br />` +
-					`Other languages: <a href="https://www.smogon.com/translations/es/analyses/ou/${pageid}">Español</a>, <a href="https://www.smogon.com/translations/fr/analyses/ou/${pageid}">Français</a>, <a href="https://www.smogon.com/translations/ita/analyses/ou/${pageid}">Italiano</a>, ` +
-					`<a href="https://www.smogon.com/translations/ger/analyses/ou/${pageid}">Deutsch</a>, <a href="https://www.smogon.com/translations/por/analyses/ou/${pageid}">Português</a>`
+				this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=${supportedLanguages[room.language]}">${generation.toUpperCase()} ${Chat.escapeHTML(formatName)} ${pokemon.name} analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a>`);
+			} else if (['ou', 'uu'].includes(formatId) && generation === 'sm') {
+				this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}">${generation.toUpperCase()} ${Chat.escapeHTML(formatName)} ${pokemon.name} analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a><br />` +
+					`Other languages: <a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=es">Español</a>, <a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=fr">Français</a>, <a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=it">Italiano</a>, ` +
+					`<a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=de">Deutsch</a>, <a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}/${formatId}/?lang=pt">Português</a>`
 				);
 			} else {
 				this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/pokemon/${speciesid}${(formatId ? '/' + formatId : '')}">${generation.toUpperCase()} ${Chat.escapeHTML(formatName)} ${pokemon.name} analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a>`);
@@ -2111,7 +2031,7 @@ const commands = {
 		// Move
 		if (move.exists && move.gen <= genNumber) {
 			atLeastOne = true;
-			this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/moves/${toId(move.name)}">${generation.toUpperCase()} ${move.name} move analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a>`);
+			this.sendReplyBox(`<a href="https://www.smogon.com/dex/${generation}/moves/${toID(move.name)}">${generation.toUpperCase()} ${move.name} move analysis</a>, brought to you by <a href="https://www.smogon.com">Smogon University</a>`);
 		}
 
 		// Format
@@ -2151,11 +2071,11 @@ const commands = {
 	},
 	smogdexhelp: [
 		`/analysis [pokemon], [generation], [format] - Links to the Smogon University analysis for this Pok\u00e9mon in the given generation.`,
-		`!analysis [pokemon], [generation], [format] - Shows everyone this link. Requires: + % @ * # & ~`,
+		`!analysis [pokemon], [generation], [format] - Shows everyone this link. Requires: + % @ # & ~`,
 	],
 
 	'!veekun': true,
-	veekun: function (target, broadcast, user) {
+	veekun(target, broadcast, user) {
 		if (!target) return this.parse('/help veekun');
 		if (!this.runBroadcast()) return;
 
@@ -2233,11 +2153,11 @@ const commands = {
 	},
 	veekunhelp: [
 		`/veekun [pokemon] - Links to Veekun website for this pokemon/item/move/ability/nature.`,
-		`!veekun [pokemon] - Shows everyone this link. Requires: + % @ * # & ~`,
+		`!veekun [pokemon] - Shows everyone this link. Requires: + % @ # & ~`,
 	],
 
 	'!register': true,
-	register: function () {
+	register() {
 		if (!this.runBroadcast()) return;
 		this.sendReplyBox(`You will be prompted to register upon winning a rated battle. Alternatively, there is a register button in the <button name="openOptions"><i class="fa fa-cog"></i> Options</button> menu in the upper right.`);
 	},
@@ -2246,12 +2166,12 @@ const commands = {
 	 * Miscellaneous commands
 	 *********************************************************/
 
-	potd: function (target, room, user) {
+	potd(target, room, user) {
 		if (!this.can('potd')) return false;
 
 		Config.potd = target;
 		// TODO: support eval in new PM
-		Rooms.PM.eval('Config.potd = \'' + toId(target) + '\'');
+		Rooms.PM.eval('Config.potd = \'' + toID(target) + '\'');
 		if (target) {
 			if (Rooms.lobby) Rooms.lobby.addRaw(`<div class="broadcast-blue"><b>The Pok&eacute;mon of the Day is now ${target}!</b><br />This Pokemon will be guaranteed to show up in random battles.</div>`);
 			this.modlog('POTD', null, target);
@@ -2263,7 +2183,7 @@ const commands = {
 
 	'!dice': true,
 	roll: 'dice',
-	dice: function (target, room, user) {
+	dice(target, room, user) {
 		if (!target || target.match(/[^\d\sdHL+-]/i)) return this.parse('/help dice');
 		if (!this.runBroadcast(true)) return;
 
@@ -2362,7 +2282,7 @@ const commands = {
 	'!pickrandom': true,
 	pr: 'pickrandom',
 	pick: 'pickrandom',
-	pickrandom: function (target, room, user) {
+	pickrandom(target, room, user) {
 		if (!target) return false;
 		if (!target.includes(',')) return this.parse('/help pick');
 		if (!this.runBroadcast(true)) return false;
@@ -2375,7 +2295,7 @@ const commands = {
 	},
 	pickrandomhelp: [`/pick [option], [option], ... - Randomly selects an item from a list containing 2 or more elements.`],
 
-	showimage: function (target, room, user) {
+	showimage(target, room, user) {
 		if (!target) return this.parse('/help showimage');
 		if (!this.can('declare', null, room)) return false;
 		if (!this.runBroadcast()) return;
@@ -2422,11 +2342,58 @@ const commands = {
 	},
 	showimagehelp: [`/showimage [url], [width], [height] - Show an image. Any CSS units may be used for the width or height (default: px). If width and height aren't provided, automatically scale the image to fit in chat. Requires: # & ~`],
 
-	htmlbox: function (target, room, user) {
+	'!pi': true,
+	pi(target, room, user) {
+		return this.sendReplyBox(
+			'Did you mean: 1. 3.1415926535897932384626... (Decimal)<br />' +
+			'2. 3.184809493B91866... (Duodecimal)<br />' +
+			'3. 3.243F6A8885A308D... (Hexadecimal)<br /><br />' +
+			'How many digits of pi do YOU know? Test it out <a href="http://guangcongluo.com/mempi/">here</a>!');
+	},
+
+	'!code': true,
+	code(target, room, user) {
+		if (!target) return this.parse('/help code');
+		if (!this.canTalk()) return;
+		if (target.startsWith('\n')) target = target.slice(1);
+		if (target.length >= 8192) return this.errorReply("Your code must be under 8192 characters long!");
+		const separator = '\n';
+		if (target.includes(separator) || target.length > 150) {
+			const params = target.split(separator);
+			let output = [];
+			let cutoff = 3;
+			for (const param of params) {
+				if (output.length < 2 && param.length > 80) cutoff = 2;
+				output.push(Chat.escapeHTML(param));
+			}
+			let code;
+			if (output.length > cutoff) {
+				code = `<div class="chat"><details class="readmore code" style="white-space: pre-wrap; display: table; tab-size: 3"><summary>${output.slice(0, cutoff).join('<br />')}</summary>${output.slice(cutoff).join('<br />')}</details></div>`;
+			} else {
+				code = `<div class="chat"><code style="white-space: pre-wrap; display: table; tab-size: 3">${output.join('<br />')}</code></div>`;
+			}
+
+			if (!this.canBroadcast(true, '!code')) return;
+			if (this.broadcastMessage && !this.can('broadcast', null, room)) return false;
+
+			if (!this.runBroadcast(true, '!code')) return;
+
+			this.sendReplyBox(code);
+		} else {
+			return this.errorReply("You can simply use ``[code]`` for code messages that are only one line.");
+		}
+	},
+	codehelp: [
+		`!code [code] - Broadcasts code to a room. Accepts multi-line arguments. Requires: + % @ & # ~`,
+		`In order to use !code in private messages you must be a global voice or higher`,
+		`/code [code] - Shows you code. Accepts multi-line arguments.`,
+	],
+
+	htmlbox(target, room, user) {
 		if (!target) return this.parse('/help htmlbox');
 		target = this.canHTML(target);
 		if (!target) return;
-
+		target = Chat.collapseLineBreaksHTML(target);
 		if (!this.canBroadcast(true, '!htmlbox')) return;
 		if (this.broadcastMessage && !this.can('declare', null, room)) return false;
 
@@ -2438,13 +2405,13 @@ const commands = {
 		`/htmlbox [message] - Displays a message, parsing HTML code contained.`,
 		`!htmlbox [message] - Shows everyone a message, parsing HTML code contained. Requires: * # & ~`,
 	],
-	addhtmlbox: function (target, room, user, connection, cmd) {
+	addhtmlbox(target, room, user, connection, cmd) {
 		if (!target) return this.parse('/help ' + cmd);
 		if (!this.canTalk()) return;
 		target = this.canHTML(target);
 		if (!target) return;
 		if (!this.can('addhtml', null, room)) return;
-
+		target = Chat.collapseLineBreaksHTML(target);
 		if (!user.can('addhtml')) {
 			target += Chat.html`<div style="float:right;color:#888;font-size:8pt">[${user.name}]</div><div style="clear:both"></div>`;
 		}
@@ -2454,7 +2421,7 @@ const commands = {
 	addhtmlboxhelp: [
 		`/addhtmlbox [message] - Shows everyone a message, parsing HTML code contained. Requires: * & ~`,
 	],
-	addrankhtmlbox: function (target, room, user, connection, cmd) {
+	addrankhtmlbox(target, room, user, connection, cmd) {
 		if (!target) return this.parse('/help ' + cmd);
 		if (!this.canTalk()) return;
 		let [rank, html] = this.splitOne(target);
@@ -2462,7 +2429,7 @@ const commands = {
 		html = this.canHTML(html);
 		if (!html) return;
 		if (!this.can('addhtml', null, room)) return;
-
+		html = Chat.collapseLineBreaksHTML(html);
 		if (!user.can('addhtml')) {
 			html += Chat.html`<div style="float:right;color:#888;font-size:8pt">[${user.name}]</div><div style="clear:both"></div>`;
 		}
@@ -2473,16 +2440,16 @@ const commands = {
 		`/addrankhtmlbox [rank], [message] - Shows everyone with the specified rank or higher a message, parsing HTML code contained. Requires: * & ~`,
 	],
 	changeuhtml: 'adduhtml',
-	adduhtml: function (target, room, user, connection, cmd) {
+	adduhtml(target, room, user, connection, cmd) {
 		if (!target) return this.parse('/help ' + cmd);
 		if (!this.canTalk()) return;
 
 		let [name, html] = this.splitOne(target);
-		name = toId(name);
+		name = toID(name);
 		html = this.canHTML(html);
 		if (!html) return;
 		if (!this.can('addhtml', null, room)) return;
-
+		html = Chat.collapseLineBreaksHTML(html);
 		if (!user.can('addhtml')) {
 			html += Chat.html`<div style="float:right;color:#888;font-size:8pt">[${user.name}]</div><div style="clear:both"></div>`;
 		}
@@ -2497,18 +2464,18 @@ const commands = {
 		`/changeuhtml [name], [message] - Changes the message previously shown with /adduhtml [name]. Requires: * & ~`,
 	],
 	changerankuhtml: 'addrankuhtml',
-	addrankuhtml: function (target, room, user, connection, cmd) {
+	addrankuhtml(target, room, user, connection, cmd) {
 		if (!target) return this.parse('/help ' + cmd);
 		if (!this.canTalk()) return;
 
 		let [rank, uhtml] = this.splitOne(target);
 		if (!(rank in Config.groups)) return this.errorReply(`Group '${rank}' does not exist.`);
 		let [name, html] = this.splitOne(uhtml);
-		name = toId(name);
+		name = toID(name);
 		html = this.canHTML(html);
 		if (!html) return;
 		if (!this.can('addhtml', null, room)) return;
-
+		html = Chat.collapseLineBreaksHTML(html);
 		if (!user.can('addhtml')) {
 			html += Chat.html`<div style="float:right;color:#888;font-size:8pt">[${user.name}]</div><div style="clear:both"></div>`;
 		}
@@ -2524,8 +2491,38 @@ const commands = {
 	],
 };
 
+/** @type {PageTable} */
+const pages = {
+	punishments(query, user) {
+		this.title = 'Punishments';
+		let buf = "";
+		this.extractRoom();
+		if (!user.named) return Rooms.RETRY_AFTER_LOGIN;
+		if (!this.room.chatRoomData) return;
+		if (!this.can('mute', null, this.room)) return;
+		// Ascending order
+		const sortedPunishments = Array.from(Punishments.getPunishments(this.room.id)).sort((a, b) => a[1].expireTime - b[1].expireTime);
+		buf += Punishments.visualizePunishments(sortedPunishments, user);
+		return buf;
+	},
+	globalpunishments(query, user) {
+		this.title = 'Global Punishments';
+		let buf = "";
+		if (!user.named) return Rooms.RETRY_AFTER_LOGIN;
+		if (!this.can('lock')) return;
+		// Ascending order
+		const sortedPunishments = Array.from(Punishments.getPunishments()).sort((a, b) => a[1].expireTime - b[1].expireTime);
+		buf += Punishments.visualizePunishments(sortedPunishments, user);
+		return buf;
+	},
+};
+
+exports.pages = pages;
 exports.commands = commands;
 
 process.nextTick(() => {
 	Dex.includeData();
+	Chat.multiLinePattern.register(
+		'/htmlbox', '!htmlbox', '/addhtmlbox', '/addrankhtmlbox', '/adduthml', '/changeuhtml', '/addrankuhtmlbox', '/changerankuhtmlbox'
+	);
 });

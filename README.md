@@ -10,6 +10,7 @@ Navigation: [Website][1] | **Server repository** | [Client repository][2] | [Dex
 [![Build Status](https://api.travis-ci.com/Zarel/Pokemon-Showdown.svg)](https://travis-ci.com/Zarel/Pokemon-Showdown)
 [![Dependency Status](https://david-dm.org/zarel/Pokemon-Showdown.svg)](https://david-dm.org/zarel/Pokemon-Showdown)
 [![devDependency Status](https://david-dm.org/zarel/Pokemon-Showdown/dev-status.svg)](https://david-dm.org/zarel/Pokemon-Showdown?type=dev)
+[![Total Alerts](https://img.shields.io/lgtm/alerts/g/Zarel/Pokemon-Showdown.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Zarel/Pokemon-Showdown/alerts)
 
 Introduction
 ------------------------------------------------------------------------
@@ -29,13 +30,18 @@ Installing
 
     ./pokemon-showdown
 
-(Requires Node.js 8+)
+(Requires Node.js v10+)
+
+If your distro package manager has an old Node.js version, the simplest way to upgrade is `n` – usually no root necessary:
+
+    npm install --global n
+    n latest
 
 
 Detailed installation instructions
 ------------------------------------------------------------------------
 
-Pokémon Showdown requires you to have [Node.js][6] installed, 8.x or later (7.7 or later can work, but you might as well be on the latest stable).
+Pokémon Showdown requires you to have [Node.js][6] installed, v10.x or later.
 
 Next, obtain a copy of Pokémon Showdown. If you're reading this outside of GitHub, you've probably already done this. If you're reading this in GitHub, there's a "Clone or download" button near the top right (it's green). I recommend the "Open in Desktop" method - you need to install GitHub Desktop which is more work than "Download ZIP", but it makes it much easier to update in the long run (it lets you use the `/updateserver` command).
 
@@ -144,8 +150,9 @@ Owner
 
 Staff
 
-- Bär Halberkamp [bumbadadabum] - Development
+- Astrid Halberkamp [bumbadadabum] - Development
 - Chris Monsanto [chaos] - Sysadmin
+- Kirk Scheibelhut [pre] - Development, Sysadmin
 - Mathieu Dias-Martins [Marty-D] - Research (game mechanics), Development
 - [The Immortal] - Development
 
@@ -160,11 +167,15 @@ Retired Staff
 Major Contributors
 
 - Andrew Werner [HoeenHero] - Development
+- Austin Couturier [Austin] - Development (damage calculator)
 - Kevin Lau [Ascriptmaster] - Development, Art (battle animations)
 - Konrad Borowski [xfix] - Development
+- Leonard Craft III [DaWoblefet] - Research (game mechanics)
 - Neil Rashbrook [urkerab] - Development
+- [peach] - Development
 - Quinton Lee [sirDonovan] - Development
 - [Ridaz] - Art (battle animations)
+- Robin Vandenbrande [Quinella] - Development
 - Tobias Mann [asgdf] - Development
 - William [MacChaeger] - Development
 
@@ -172,20 +183,19 @@ Contributors
 
 - Alexander B. [mathfreak231] - Development
 - Andrew Goodsell [Zracknel] - Art (battle weather backdrops)
-- Austin Couturier [Austin] - Development
 - Avery Zimmer [Lyren, SolarisFox] - Development
 - Ben Davies [Morfent] - Development
 - Ben Frengley [TalkTakesTime] - Development
 - Cody Thompson [Rising_Dusk] - Development
-- [Honko] - Development
+- [Honko] - Development (damage calculator)
 - Ian Clail [Layell] - Art (battle graphics, sprites)
+- Jacob McLemore [McLemore] - Development
 - Jeremy Piemonte [panpawn] - Development
-- [jumbowhales] - Development
 - Kris Johnson [Kris] - Development
-- Leonard Craft III [DaWoblefet] - Research (game mechanics)
 - Luke Harmon-Vellotti [moo, CheeseMuffin] - Development
-- Robin Vandenbrande [Quinella] - Development
 - Russell Jones [SadisticMystic] - Research (game mechanics)
+- Spandan Punwatkar [spandan]- Development
+- Waleed Hassan [jetou] - Development
 
 Special thanks
 

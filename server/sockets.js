@@ -8,16 +8,22 @@
  * browsers, the networking processes, and users.js in the
  * main process.
  *
- * @license MIT license
+ * @license MIT
  */
 
 'use strict';
 
-const MINUTES = 60 * 1000;
-
 const cluster = require('cluster');
 const fs = require('fs');
-const FS = require('../lib/fs');
+
+/** @typedef {0 | 1 | 2 | 3 | 4} ChannelID */
+
+/** @type {typeof import('../lib/crashlogger').crashlogger} */
+let crashlogger = require(/** @type {any} */('../.lib-dist/crashlogger')).crashlogger;
+
+const Monitor = {
+	crashlog: crashlogger,
+};
 
 if (cluster.isMaster) {
 	cluster.setupMaster({
@@ -77,7 +83,7 @@ if (cluster.isMaster) {
 			workers.delete(worker.id);
 		} else if (code > 0) {
 			// Worker was killed abnormally, likely because of a crash.
-			require('../lib/crashlogger')(new Error(`Worker ${worker.id} abruptly died with code ${code} and signal ${signal}`), "The main process");
+			Monitor.crashlog(new Error(`Worker ${worker.id} abruptly died with code ${code} and signal ${signal}`), "The main process");
 			// Don't delete the worker so it can be inspected if need be.
 		}
 
@@ -188,7 +194,7 @@ if (cluster.isMaster) {
 	};
 
 	/**
-	 * @param {string} roomid
+	 * @param {RoomID} roomid
 	 * @param {string} message
 	 */
 	exports.roomBroadcast = function (roomid, message) {
@@ -199,7 +205,7 @@ if (cluster.isMaster) {
 
 	/**
 	 * @param {cluster.Worker} worker
-	 * @param {string} roomid
+	 * @param {RoomID} roomid
 	 * @param {string} socketid
 	 */
 	exports.roomAdd = function (worker, roomid, socketid) {
@@ -208,7 +214,7 @@ if (cluster.isMaster) {
 
 	/**
 	 * @param {cluster.Worker} worker
-	 * @param {string} roomid
+	 * @param {RoomID} roomid
 	 * @param {string} socketid
 	 */
 	exports.roomRemove = function (worker, roomid, socketid) {
@@ -216,7 +222,7 @@ if (cluster.isMaster) {
 	};
 
 	/**
-	 * @param {string} roomid
+	 * @param {RoomID} roomid
 	 * @param {string} message
 	 */
 	exports.channelBroadcast = function (roomid, message) {
@@ -227,12 +233,12 @@ if (cluster.isMaster) {
 
 	/**
 	 * @param {cluster.Worker} worker
-	 * @param {string} roomid
-	 * @param {number} channelIndex
+	 * @param {RoomID} roomid
+	 * @param {ChannelID} channelid
 	 * @param {string} socketid
 	 */
-	exports.channelMove = function (worker, roomid, channelIndex, socketid) {
-		worker.send(`.${roomid}\n${channelIndex}\n${socketid}`);
+	exports.channelMove = function (worker, roomid, channelid, socketid) {
+		worker.send(`.${roomid}\n${channelid}\n${socketid}`);
 	};
 
 	/**
@@ -244,8 +250,7 @@ if (cluster.isMaster) {
 	};
 } else {
 	// is worker
-	// @ts-ignore This file doesn't exist on the repository, so Travis checks fail if this isn't ignored
-	global.Config = require('../config/config');
+	global.Config = require(/** @type {any} */('../.server-dist/config-loader')).Config;
 
 	if (process.env.PSPORT) Config.port = +process.env.PSPORT;
 	if (process.env.PSBINDADDR) Config.bindaddress = process.env.PSBINDADDR;
@@ -276,12 +281,13 @@ if (cluster.isMaster) {
 
 	// It's optional if you don't need these features.
 
-	global.Dnsbl = require('./dnsbl');
+	/** @type {typeof import('./ip-tools').IPTools} */
+	global.IPTools = require(/** @type {any} */('../.server-dist/ip-tools')).IPTools;
 
 	if (Config.crashguard) {
 		// graceful crash
 		process.on('uncaughtException', err => {
-			require('../lib/crashlogger')(err, `Socket process ${cluster.worker.id} (${process.pid})`);
+			Monitor.crashlog(err, `Socket process ${cluster.worker.id} (${process.pid})`);
 		});
 	}
 
@@ -296,7 +302,7 @@ if (cluster.isMaster) {
 			try {
 				key = fs.readFileSync(key);
 			} catch (e) {
-				require('../lib/crashlogger')(new Error(`Failed to read the configured SSL private key PEM file:\n${e.stack}`), `Socket process ${cluster.worker.id} (${process.pid})`);
+				Monitor.crashlog(new Error(`Failed to read the configured SSL private key PEM file:\n${e.stack}`), `Socket process ${cluster.worker.id} (${process.pid})`);
 			}
 		} catch (e) {
 			console.warn('SSL private key config values will not support HTTPS server option values in the future. Please set it to use the absolute path of its PEM file.');
@@ -310,7 +316,7 @@ if (cluster.isMaster) {
 			try {
 				cert = fs.readFileSync(cert);
 			} catch (e) {
-				require('../lib/crashlogger')(new Error(`Failed to read the configured SSL certificate PEM file:\n${e.stack}`), `Socket process ${cluster.worker.id} (${process.pid})`);
+				Monitor.crashlog(new Error(`Failed to read the configured SSL certificate PEM file:\n${e.stack}`), `Socket process ${cluster.worker.id} (${process.pid})`);
 			}
 		} catch (e) {
 			console.warn('SSL certificate config values will not support HTTPS server option values in the future. Please set it to use the absolute path of its PEM file.');
@@ -322,7 +328,7 @@ if (cluster.isMaster) {
 				// In case there are additional SSL config settings besides the key and cert...
 				appssl = require('https').createServer(Object.assign({}, Config.ssl.options, {key, cert}));
 			} catch (e) {
-				require('../lib/crashlogger')(`The SSL settings are misconfigured:\n${e.stack}`, `Socket process ${cluster.worker.id} (${process.pid})`);
+				Monitor.crashlog(new Error(`The SSL settings are misconfigured:\n${e.stack}`), `Socket process ${cluster.worker.id} (${process.pid})`);
 			}
 		}
 	}
@@ -386,7 +392,7 @@ if (cluster.isMaster) {
 
 	const sockjs = require('sockjs');
 	const options = {
-		sockjs_url: "//play.pokemonshowdown.com/js/lib/sockjs-1.1.1-nwjsfix.min.js",
+		sockjs_url: `//${Config.routes.client}/js/lib/sockjs-1.4.0-nwjsfix.min.js`,
 		prefix: '/showdown',
 		/**
 		 * @param {string} severity
@@ -397,14 +403,14 @@ if (cluster.isMaster) {
 		},
 	};
 
-	if (Config.wsdeflate) {
+	if (Config.wsdeflate !== null) {
 		try {
 			// @ts-ignore
 			const deflate = require('permessage-deflate').configure(Config.wsdeflate);
 			// @ts-ignore
 			options.faye_server_options = {extensions: [deflate]};
 		} catch (e) {
-			require('../lib/crashlogger')(new Error("Dependency permessage-deflate is not installed or is otherwise unaccessable. No message compression will take place until server restart."), "Sockets");
+			Monitor.crashlog(new Error("Dependency permessage-deflate is not installed or is otherwise unaccessable. No message compression will take place until server restart."), "Sockets");
 		}
 	}
 
@@ -416,29 +422,37 @@ if (cluster.isMaster) {
 	const sockets = new Map();
 	/**
 	 * roomid:socketid:Connection
-	 * @type {Map<string, Map<string, import('sockjs').Connection>>}
+	 * @type {Map<RoomID, Map<string, import('sockjs').Connection>>}
 	 */
 	const rooms = new Map();
 	/**
-	 * roomid:socketid:channelIndex
-	 * @type {Map<string, Map<string, string>>}
+	 * roomid:socketid:channelid
+	 * @type {Map<RoomID, Map<string, ChannelID>>}
 	 */
 	const roomChannels = new Map();
 
-	/** @type {WriteStream} */
-	const logger = FS(`logs/sockets-${process.pid}`).createAppendStream();
-
-	// Deal with phantom connections.
-	const sweepSocketInterval = setInterval(() => {
-		for (const socket of sockets.values()) {
-			// @ts-ignore
-			if (socket.protocol === 'xhr-streaming' && socket._session && socket._session.recv) {
-				logger.write('Found a ghost connection with protocol xhr-streaming\n');
-				// @ts-ignore
-				socket._session.recv.didClose();
-			}
+	/**
+	 * @param {string} message
+	 * @param {-1 | ChannelID} channelid
+	 */
+	const extractChannel = (message, channelid) => {
+		if (channelid === -1) {
+			// Grab all privileged messages
+			return message.replace(/\n\|split\|p[1234]\n([^\n]*)\n(?:[^\n]*)/g, '\n$1');
 		}
-	}, 10 * MINUTES);
+
+		// Grab privileged messages channel has access to
+		switch (channelid) {
+		case 1: message = message.replace(/\n\|split\|p1\n([^\n]*)\n(?:[^\n]*)/g, '\n$1'); break;
+		case 2: message = message.replace(/\n\|split\|p2\n([^\n]*)\n(?:[^\n]*)/g, '\n$1'); break;
+		case 3: message = message.replace(/\n\|split\|p3\n([^\n]*)\n(?:[^\n]*)/g, '\n$1'); break;
+		case 4: message = message.replace(/\n\|split\|p4\n([^\n]*)\n(?:[^\n]*)/g, '\n$1'); break;
+		}
+
+		// Discard remaining privileged messages
+		// Note: the last \n? is for privileged messages that are empty when non-privileged
+		return message.replace(/\n\|split\|(?:[^\n]*)\n(?:[^\n]*)\n\n?/g, '\n');
+	};
 
 	process.on('message', data => {
 		// console.log('worker received: ' + data);
@@ -447,10 +461,12 @@ if (cluster.isMaster) {
 		let socketid = '';
 		/** @type {Map<string, import('sockjs').Connection> | undefined?} */
 		let room = null;
-		let roomid = '';
-		/** @type {Map<string, string> | undefined?} */
+		/** @type {RoomID} */
+		let roomid = /** @type {RoomID} */('');
+		/** @type {Map<string, ChannelID> | undefined?} */
 		let roomChannel = null;
-		let channelid = '';
+		/** @type {ChannelID} */
+		let channelid = 0;
 		let nlLoc = -1;
 		let message = '';
 
@@ -538,7 +554,7 @@ if (cluster.isMaster) {
 			nlLoc = data.indexOf('\n');
 			roomid = data.slice(1, nlLoc);
 			let nlLoc2 = data.indexOf('\n', nlLoc + 1);
-			channelid = data.slice(nlLoc + 1, nlLoc2);
+			channelid = /** @type {ChannelID} */(Number(data.slice(nlLoc + 1, nlLoc2)));
 			socketid = data.slice(nlLoc2 + 1);
 
 			roomChannel = roomChannels.get(roomid);
@@ -546,7 +562,7 @@ if (cluster.isMaster) {
 				roomChannel = new Map();
 				roomChannels.set(roomid, roomChannel);
 			}
-			if (channelid === '0') {
+			if (channelid === 0) {
 				roomChannel.delete(socketid);
 			} else {
 				roomChannel.set(socketid, channelid);
@@ -561,31 +577,14 @@ if (cluster.isMaster) {
 			room = rooms.get(roomid);
 			if (!room) return;
 
-			/** @type {[string?, string?, string?]} */
-			let messages = [null, null, null];
+			/** @type {[string?, string?, string?, string?, string?]} */
+			const messages = [null, null, null, null, null];
 			message = data.substr(nlLoc + 1);
 			roomChannel = roomChannels.get(roomid);
 			for (const [socketid, socket] of room) {
-				switch (roomChannel ? roomChannel.get(socketid) : '0') {
-				case '1':
-					if (!messages[1]) {
-						messages[1] = message.replace(/\n\|split\n[^\n]*\n([^\n]*)\n[^\n]*\n[^\n]*/g, '\n$1').replace(/\n\n/g, '\n');
-					}
-					socket.write(messages[1]);
-					break;
-				case '2':
-					if (!messages[2]) {
-						messages[2] = message.replace(/\n\|split\n[^\n]*\n[^\n]*\n([^\n]*)\n[^\n]*/g, '\n$1').replace(/\n\n/g, '\n');
-					}
-					socket.write(messages[2]);
-					break;
-				default:
-					if (!messages[0]) {
-						messages[0] = message.replace(/\n\|split\n([^\n]*)\n[^\n]*\n[^\n]*\n[^\n]*/g, '\n$1').replace(/\n\n/g, '\n');
-					}
-					socket.write(messages[0]);
-					break;
-				}
+				channelid = (roomChannel && roomChannel.get(socketid)) || 0;
+				if (!messages[channelid]) messages[channelid] = extractChannel(message, channelid);
+				socket.write(/** @type {string} */(messages[channelid]));
 			}
 			break;
 		}
@@ -594,9 +593,7 @@ if (cluster.isMaster) {
 	// Clean up any remaining connections on disconnect. If this isn't done,
 	// the process will not exit until any remaining connections have been destroyed.
 	// Afterwards, the worker process will die on its own.
-	process.once('disconnect', () => {
-		clearInterval(sweepSocketInterval);
-
+	const cleanup = () => {
 		for (const socket of sockets.values()) {
 			try {
 				socket.destroy();
@@ -611,10 +608,13 @@ if (cluster.isMaster) {
 
 		// Let the server(s) finish closing.
 		setImmediate(() => process.exit(0));
-	});
+	};
+
+	process.once('disconnect', cleanup);
+	process.once('exit', cleanup);
 
 	// this is global so it can be hotpatched if necessary
-	let isTrustedProxyIp = Dnsbl.checker(Config.proxyip);
+	let isTrustedProxyIp = IPTools.checker(Config.proxyip);
 	let socketCounter = 0;
 	server.on('connection', socket => {
 		// For reasons that are not entirely clear, SockJS sometimes triggers
@@ -645,24 +645,6 @@ if (cluster.isMaster) {
 					break;
 				}
 			}
-		}
-
-		// xhr-streamming connections sometimes end up becoming ghost
-		// connections. Since it already has keepalive set, we set a timeout
-		// instead and close the connection if it has been inactive for the
-		// configured SockJS heartbeat interval plus an extra second to account
-		// for any delay in receiving the SockJS heartbeat packet.
-		if (socket.protocol === 'xhr-streaming') {
-			// @ts-ignore
-			socket._session.recv.thingy.setTimeout(
-				// @ts-ignore
-				socket._session.recv.options.heartbeat_delay + 1000,
-				() => {
-					try {
-						socket.close();
-					} catch (e) {}
-				}
-			);
 		}
 
 		// @ts-ignore
@@ -707,5 +689,7 @@ if (cluster.isMaster) {
 
 	console.log(`Test your server at http://${Config.bindaddress === '0.0.0.0' ? 'localhost' : Config.bindaddress}:${Config.port}`);
 
-	require('../lib/repl').start(`sockets-${cluster.worker.id}-${process.pid}`, cmd => eval(cmd));
+	/** @type {typeof import('../lib/repl').Repl} */
+	const Repl = require(/** @type {any} */('../.lib-dist/repl')).Repl;
+	Repl.start(`sockets-${cluster.worker.id}-${process.pid}`, cmd => eval(cmd));
 }
